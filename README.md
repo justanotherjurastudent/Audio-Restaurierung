@@ -44,9 +44,9 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 
 | Methode | Beschreibung | Qualität | Geschwindigkeit | Empfehlung |
 |---------|-------------|----------|----------------|------------|
-| **DeepFilterNet3** | Modernste KI-Rauschreduzierung | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Beste Ergebnisse |
-| **Audacity** | Bewährte spektrale Methode | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Zuverlässig & schnell |
-| **FFmpeg-Fallback** | Basis-Filterung | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Nur als Notfall |
+| **DeepFilterNet3** | Modernste KI-Rauschreduzierung | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Beste Ergebnisse |
+| **Audacity** | Bewährte spektrale Methode | ⭐⭐⭐ | ⭐⭐⭐⭐ | Zuverlässig & schnell |
+| **FFmpeg-Fallback** | Basis-Filterung | ⭐ | ⭐⭐⭐⭐⭐ | Nur als Notfall |
 
 ### 🔊 Lautstärke-Normalisierung
 
