@@ -101,7 +101,8 @@ cd audio_restauration_from_videos
 pip install -r requirements.txt
 
 3. **Programm starten**
-python audio_restauration_from_videos.py
+python main.py  # ✅ Neu
+
 
 
 ## 🎬 Erste Schritte
