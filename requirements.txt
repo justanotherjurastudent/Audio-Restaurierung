@@ -1,8 +1,18 @@
-# Standard Dependencies
+# Core GUI Framework
 customtkinter>=5.0.0
+
+# Audio Processing (Essential)
 soundfile>=0.12.0
 numpy>=1.21.0
 pyloudnorm>=0.1.0
 scipy>=1.9.0
-tkinterdnd2>=0.3.0
-DeepFilterNet3
+
+# AI Noise Reduction (Standard)
+DeepFilterNet3>=0.5.0
+
+# Built-in Python modules (nicht in requirements.txt):
+# - tkinter (standardmäßig in Python enthalten)
+# - os, subprocess, tempfile, threading, queue
+
+# External dependencies (separate Installation):
+# - FFmpeg (muss manuell installiert werden)
