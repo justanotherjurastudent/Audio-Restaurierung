@@ -4,7 +4,7 @@ Ein professionelles Tool zur KI-gestützten Audio-Restauration aus Videos mit de
 
 ![Version](https://img.shields.io/badge/version-0.6.8-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
 ## 📖 Inhaltsverzeichnis
