@@ -1,0 +1,1298 @@
+"""
+Audio-Restaurationstool v0.6.8
+"""
+
+import os
+import subprocess
+import tempfile
+import threading
+import queue
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
+
+try:
+    import soundfile as sf
+    import numpy as np
+    import pyloudnorm as pyln
+    from scipy import signal
+    
+    # DeepFilterNet3 Import mit Verfügbarkeitsprüfung
+    try:
+        from df.enhance import enhance, init_df, load_audio, save_audio
+        from df.model import ModelParams
+        DEEPFILTERNET_AVAILABLE = True
+        print("✅ DeepFilterNet3 verfügbar")
+    except ImportError:
+        DEEPFILTERNET_AVAILABLE = False
+        print("❌ DeepFilterNet3 nicht verfügbar")
+        
+except ImportError as e:
+    print(f"Fehler beim Importieren der Basis-Bibliotheken: {e}")
+    exit(1)
+
+# CustomTkinter Design konfigurieren
+ctk.set_appearance_mode("system")
+ctk.set_default_color_theme("blue")
+
+def check_ffmpeg():
+    """Prüft, ob FFmpeg verfügbar ist."""
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], 
+                              capture_output=True, text=True, timeout=5)
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+# ======================== AUDACITY NOISE REDUCTION ======================== #
+
+class AudacityNoiseReduction:
+    """Audacity Rauschreduzierung - Deutsche Kommentare"""
+    
+    def __init__(self, 
+                 window_size=2048,
+                 overlap_factor=4,
+                 noise_gain_db=12.0,        # Rauschunterdrückungs-Stärke
+                 sensitivity=6.0,           # Erkennungsempfindlichkeit  
+                 smoothing_time_ms=20,      # Zeitliche Glättung
+                 freq_smoothing_bands=0):   # Frequenz-Glättung
+        
+        self.window_size = window_size
+        self.hop_size = window_size // overlap_factor
+        self.noise_gain_db = noise_gain_db  
+        self.sensitivity = sensitivity
+        self.smoothing_time_ms = smoothing_time_ms
+        self.freq_smoothing_bands = freq_smoothing_bands
+        
+        self.noise_profile_means = None
+        self.sample_rate = None
+        self.window = np.hanning(window_size)
+        
+    def create_noise_profile(self, audio_data, sample_rate, profile_duration=0.5):
+        """Erstellt Rauschprofil aus den ersten Sekunden"""
+        self.sample_rate = sample_rate
+        
+        profile_samples = int(profile_duration * sample_rate)
+        noise_data = audio_data[:min(profile_samples, len(audio_data))]
+        
+        if len(noise_data) < self.window_size:
+            raise ValueError(f"Audio zu kurz. Mindestens {self.window_size/sample_rate:.2f}s benötigt.")
+        
+        f, t, noise_stft = signal.stft(
+            noise_data, 
+            fs=sample_rate,
+            window=self.window,
+            nperseg=self.window_size,
+            noverlap=self.window_size - self.hop_size,
+            return_onesided=True
+        )
+        
+        noise_power = np.abs(noise_stft) ** 2
+        self.noise_profile_means = np.mean(noise_power, axis=1)
+        
+        return self.noise_profile_means
+        
+    def reduce_noise(self, audio_data, sample_rate):
+        """Führt Rauschreduzierung durch"""
+        if self.noise_profile_means is None:
+            raise ValueError("Rauschprofil muss zuerst erstellt werden!")
+            
+        if sample_rate != self.sample_rate:
+            raise ValueError("Samplerate muss mit Rauschprofil übereinstimmen!")
+        
+        f, t, audio_stft = signal.stft(
+            audio_data,
+            fs=sample_rate, 
+            window=self.window,
+            nperseg=self.window_size,
+            noverlap=self.window_size - self.hop_size,
+            return_onesided=True
+        )
+        
+        audio_power = np.abs(audio_stft) ** 2
+        gains = self._calculate_spectral_gains(audio_power)
+        
+        if self.freq_smoothing_bands > 0:
+            gains = self._apply_frequency_smoothing(gains)
+        
+        gains = self._apply_time_smoothing(gains, sample_rate)
+        cleaned_stft = audio_stft * gains
+        
+        _, cleaned_audio = signal.istft(
+            cleaned_stft,
+            fs=sample_rate,
+            window=self.window, 
+            nperseg=self.window_size,
+            noverlap=self.window_size - self.hop_size
+        )
+        
+        return cleaned_audio
+        
+    def _calculate_spectral_gains(self, audio_power):
+        """Berechnet spektrale Verstärkungsfaktoren"""
+        n_freq, n_time = audio_power.shape
+        gains = np.ones((n_freq, n_time))
+        
+        noise_atten_factor = 10 ** (-self.noise_gain_db / 20.0)
+        sensitivity_linear = 10 ** (self.sensitivity / 10.0)
+        thresholds = sensitivity_linear * self.noise_profile_means[:, np.newaxis]
+        
+        noise_mask = audio_power <= thresholds
+        gains[noise_mask] = noise_atten_factor
+        gains[~noise_mask] = 1.0
+        
+        return gains
+        
+    def _apply_frequency_smoothing(self, gains):
+        """Glättet Verstärkungen über Frequenzbänder"""
+        if self.freq_smoothing_bands <= 0:
+            return gains
+            
+        smoothed_gains = np.copy(gains)
+        n_freq, n_time = gains.shape
+        
+        for t in range(n_time):
+            for f in range(n_freq):
+                f_start = max(0, f - self.freq_smoothing_bands)
+                f_end = min(n_freq, f + self.freq_smoothing_bands + 1)
+                
+                log_gains = np.log(gains[f_start:f_end, t])
+                smoothed_gains[f, t] = np.exp(np.mean(log_gains))
+                
+        return smoothed_gains
+        
+    def _apply_time_smoothing(self, gains, sample_rate):
+        """Zeitliche Glättung für natürlicheren Klang"""
+        if self.smoothing_time_ms <= 0:
+            return gains
+            
+        time_constant = self.smoothing_time_ms / 1000.0
+        hop_time = self.hop_size / sample_rate
+        alpha = 1.0 - np.exp(-hop_time / time_constant)
+        
+        smoothed_gains = np.copy(gains)
+        n_freq, n_time = gains.shape
+        
+        for t in range(1, n_time):
+            for f in range(n_freq):
+                current = gains[f, t]
+                previous = smoothed_gains[f, t-1]
+                
+                if current < previous:
+                    smoothed_gains[f, t] = current
+                else:
+                    smoothed_gains[f, t] = previous + alpha * (current - previous)
+        
+        return smoothed_gains
+
+# ======================== AUDIO-PROCESSING-FUNKTIONEN ======================== #
+
+def extract_audio(video_path, wav_path, sample_rate=48000):
+    """Extrahiert Audio als MONO WAV"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-vn",           
+        "-acodec", "pcm_s16le", 
+        "-ar", str(sample_rate),          
+        "-ac", "1",              
+        wav_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"FFmpeg-Fehler: {result.stderr}")
+
+def loudness_normalize(wav_in, wav_out, target_lufs=-15.0):
+    """LUFS-Normalisierung mit konfigurierbarem Zielwert"""
+    data, rate = sf.read(wav_in)
+    if len(data) == 0:
+        raise Exception("Audio-Datei ist leer")
+    
+    if data.ndim > 1:
+        data = np.mean(data, axis=1)
+    
+    meter = pyln.Meter(rate)
+    loudness = meter.integrated_loudness(data)
+    
+    if loudness == -np.inf:
+        raise Exception("Audio ist komplett stumm")
+    
+    data_norm = pyln.normalize.loudness(data, loudness, target_lufs)
+    sf.write(wav_out, data_norm, rate, subtype="PCM_16")
+
+def denoise_deepfilternet3(wav_in, wav_out, method_params=None):
+    """DeepFilterNet3 KI-Rauschreduzierung mit konfigurierbaren Parametern"""
+    if not DEEPFILTERNET_AVAILABLE:
+        raise Exception("DeepFilterNet3 nicht verfügbar")
+    
+    if method_params is None:
+        method_params = {}
+    
+    try:
+        # Model initialisieren
+        model, df_state, _ = init_df()
+        
+        # Audio laden
+        audio, meta = load_audio(wav_in, sr=df_state.sr())
+        
+        # Parameter für enhance() - DeepFilterNet3 unterstützt atten_lim_db
+        atten_lim_db = method_params.get('attenuation_limit', 100.0)
+        
+        # Enhancement durchführen
+        enhanced = enhance(model, df_state, audio, atten_lim_db=atten_lim_db)
+        
+        # Ergebnis speichern
+        save_audio(wav_out, enhanced, df_state.sr())
+        
+        print(f"DeepFilterNet3: Rauschreduzierung mit {atten_lim_db} dB Dämpfung")
+        
+    except Exception as e:
+        raise Exception(f"DeepFilterNet3-Fehler: {str(e)}")
+
+def denoise_audacity(wav_in, wav_out, method_params):
+    """Audacity-Rauschreduzierung"""
+    data, rate = sf.read(wav_in)
+    
+    if data.ndim > 1:
+        data = np.mean(data, axis=1)
+    
+    if len(data) < rate * 0.5:
+        raise Exception("Audio zu kurz für Audacity-Methode (min. 0.5s)")
+    
+    audacity_nr = AudacityNoiseReduction(
+        window_size=method_params.get('window_size', 2048),
+        noise_gain_db=method_params.get('rauschunterdrückung', 12.0),
+        sensitivity=method_params.get('empfindlichkeit', 6.0),
+        smoothing_time_ms=method_params.get('zeitglättung', 20),
+        freq_smoothing_bands=method_params.get('frequenzglättung', 0)
+    )
+    
+    profile_duration = min(1.0, len(data) / rate * 0.3)
+    audacity_nr.create_noise_profile(data, rate, profile_duration)
+    
+    cleaned_audio = audacity_nr.reduce_noise(data, rate)
+    
+    max_val = np.max(np.abs(cleaned_audio))
+    if max_val > 0.95:
+        cleaned_audio = cleaned_audio * (0.95 / max_val)
+    
+    sf.write(wav_out, cleaned_audio, rate, subtype="PCM_16")
+
+def denoise_fallback(wav_in, wav_out):
+    """Einfacher FFmpeg-Bandpass-Filter als Notfall-Lösung"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", wav_in,
+        "-af", "highpass=f=80,lowpass=f=8000,volume=1.2",  
+        wav_out
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"FFmpeg-Filter-Fehler: {result.stderr}")
+
+def mux_audio_back(video_in, wav_in, video_out):
+    """Ersetzt Tonspur ohne Video-Neukodierung"""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_in,
+        "-i", wav_in,
+        "-map", "0:v:0",      
+        "-map", "1:a:0",      
+        "-c:v", "copy",       
+        "-c:a", "aac", "-b:a", "128k",   
+        video_out
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Video-Zusammenführung fehlgeschlagen: {result.stderr}")
+
+def process_video(path, out_queue, noise_method="deepfilternet3", method_params=None, 
+                 filename_mode="suffix", custom_suffix="restauriert", output_dir=None, target_lufs=-15.0, stop_event=None):
+    """Hauptverarbeitungsfunktion mit Abbrechen-Funktionalität"""
+    if method_params is None:
+        method_params = {}
+        
+    try:
+        # Prüfe auf Abbruch-Signal
+        if stop_event and stop_event.is_set():
+            out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+            return
+            
+        if not os.path.exists(path):
+            raise Exception("Datei existiert nicht")
+        
+        file_size = os.path.getsize(path)
+        if file_size == 0:
+            raise Exception("Datei ist leer")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_orig = os.path.join(tmp, "orig.wav")
+            wav_norm = os.path.join(tmp, "norm.wav")
+            wav_denoise = os.path.join(tmp, "denoise.wav")
+
+            # Audio extrahieren (48kHz für DeepFilterNet3)
+            extract_sr = 48000 if noise_method == "deepfilternet3" else 22050
+            try:
+                if stop_event and stop_event.is_set():
+                    out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                    return
+                extract_audio(path, wav_orig, sample_rate=extract_sr)
+            except Exception as e:
+                raise Exception(f"Audio-Extraktion fehlgeschlagen: {str(e)}")
+            
+            # LUFS-Normalisierung mit konfigurierbarem Zielwert
+            try:
+                if stop_event and stop_event.is_set():
+                    out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                    return
+                loudness_normalize(wav_orig, wav_norm, target_lufs)
+            except Exception as e:
+                raise Exception(f"LUFS-Normalisierung fehlgeschlagen: {str(e)}")
+            
+            # Rauschreduzierung mit Fallback-Logik
+            success = False
+            used_method = noise_method
+            warnings = []
+            
+            try:
+                if stop_event and stop_event.is_set():
+                    out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                    return
+                    
+                if noise_method == "deepfilternet3":
+                    if not DEEPFILTERNET_AVAILABLE:
+                        raise Exception("DeepFilterNet3 nicht verfügbar")
+                    denoise_deepfilternet3(wav_norm, wav_denoise, method_params)
+                    success = True
+                    
+                elif noise_method == "audacity":
+                    denoise_audacity(wav_norm, wav_denoise, method_params)
+                    success = True
+                    
+                else:
+                    raise Exception(f"Unbekannte Methode: {noise_method}")
+                    
+            except Exception as e:
+                original_error = str(e)
+                
+                # Fallback 1: Bei DeepFilterNet3-Fehlern -> Audacity
+                if noise_method == "deepfilternet3" and not success:
+                    try:
+                        if stop_event and stop_event.is_set():
+                            out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                            return
+                        warnings.append("DeepFilterNet3 fehlgeschlagen → Audacity verwendet")
+                        out_queue.put(("warning", path, "DeepFilterNet3 → Audacity Fallback"))
+                        denoise_audacity(wav_norm, wav_denoise, method_params)
+                        used_method = "audacity"
+                        success = True
+                    except Exception as e2:
+                        warnings.append(f"Audacity Fallback fehlgeschlagen: {str(e2)}")
+                
+                # Fallback 2: Letzter Ausweg -> FFmpeg
+                if not success:
+                    try:
+                        if stop_event and stop_event.is_set():
+                            out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                            return
+                        warnings.append("Alle Hauptmethoden fehlgeschlagen → FFmpeg-Notfallmodus")
+                        out_queue.put(("warning", path, "FFmpeg-Notfallmodus aktiviert"))
+                        denoise_fallback(wav_norm, wav_denoise)
+                        used_method = "ffmpeg_fallback"
+                        success = True
+                    except Exception as e3:
+                        raise Exception(f"Alle Methoden fehlgeschlagen:\nUrsprünglich: {original_error}\nFFmpeg: {str(e3)}")
+
+            # Ausgabedatei erstellen mit verbesserter Dateinamen-Logik
+            base, ext = os.path.splitext(path)
+            base_name = os.path.basename(base)
+            
+            if filename_mode == "original":
+                output_name = f"{base_name}{ext}"
+                # Wenn Original-Datei bereits existiert, füge Nummer hinzu
+                counter = 1
+                while True:
+                    if output_dir:
+                        test_path = os.path.join(output_dir, output_name)
+                    else:
+                        test_path = os.path.join(os.path.dirname(path), output_name)
+                    
+                    if not os.path.exists(test_path) or test_path == path:
+                        break
+                    output_name = f"{base_name}_({counter}){ext}"
+                    counter += 1
+            else:  # suffix mode
+                output_name = f"{base_name}_{custom_suffix}{ext}"
+            
+            if output_dir:
+                out_path = os.path.join(output_dir, output_name)
+            else:
+                out_path = os.path.join(os.path.dirname(path), output_name)
+            
+            try:
+                if stop_event and stop_event.is_set():
+                    out_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                    return
+                mux_audio_back(path, wav_denoise, out_path)
+            except Exception as e:
+                raise Exception(f"Video-Zusammenführung fehlgeschlagen: {str(e)}")
+
+        # Erfolgsmeldung
+        success_msg = f"{out_path} (Methode: {used_method}, LUFS: {target_lufs})"
+        if warnings:
+            success_msg += f" [Warnungen: {'; '.join(warnings)}]"
+        out_queue.put(("done", path, success_msg))
+        
+    except Exception as e:
+        out_queue.put(("error", path, str(e)))
+
+# ======================== BEREINIGTE GUI v0.6.8 ======================== #
+
+class AudioRestorerGUIFinal(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        
+        self.title("🎵 Audio-Restaurationstool v0.6.8 - Bereinigte Version")
+        self.geometry("1100x860")
+        self.resizable(True, False)
+        
+        # FFmpeg-Check
+        if not check_ffmpeg():
+            messagebox.showerror("FFmpeg nicht gefunden", 
+                               "FFmpeg ist nicht installiert oder nicht im PATH.\n\n" +
+                               "Download: https://ffmpeg.org/download.html")
+            self.destroy()
+            return
+
+        self.create_gui()
+        
+        # Threading mit Abbrechen-Funktionalität
+        self.file_queue = queue.Queue()
+        self.result_queue = queue.Queue()
+        self.worker_thread = None
+        self.stop_event = threading.Event()
+        self.file_paths = {}
+        self.is_processing = False
+        
+        # Zähler als Instanzvariablen
+        self.processed_files = 0
+        self.successful_files = 0
+        self.cancelled_files = 0
+        self.warnings = []
+        self.errors = []
+
+    def create_gui(self):
+        # ========== HEADER ========== #
+        header_frame = ctk.CTkFrame(self)
+        header_frame.pack(fill="x", padx=15, pady=10)
+        
+        title_label = ctk.CTkLabel(header_frame, 
+                                  text="🎵 Audio-Restaurationstool v0.6.8", 
+                                  font=ctk.CTkFont(size=24, weight="bold"))
+        title_label.pack(pady=(10, 5))
+        
+        subtitle_label = ctk.CTkLabel(header_frame, 
+                                     text="🤖 KI-Enhanced • 📊 Batch-Verarbeitung • ⏹️ Abbrechen-Funktion", 
+                                     font=ctk.CTkFont(size=13))
+        subtitle_label.pack(pady=(0, 5))
+        
+        # Status der verfügbaren Methoden
+        status_text = "Verfügbare Methoden: "
+        if DEEPFILTERNET_AVAILABLE:
+            status_text += "✅ DeepFilterNet3 (KI) • "
+        else:
+            status_text += "❌ DeepFilterNet3 • "
+        status_text += "✅ Audacity • ✅ FFmpeg-Fallback"
+        
+        status_label = ctk.CTkLabel(header_frame, text=status_text, 
+                                   font=ctk.CTkFont(size=11), 
+                                   text_color="gray")
+        status_label.pack(pady=(0, 10))
+
+        # ========== ZWEI-SPALTEN LAYOUT ========== #
+        main_container = ctk.CTkFrame(self)
+        main_container.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+        
+        # Linke Spalte - Einstellungen
+        left_frame = ctk.CTkFrame(main_container)
+        left_frame.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
+        
+        # Rechte Spalte - Dateien und Buttons
+        right_frame = ctk.CTkFrame(main_container)  
+        right_frame.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
+
+        # ========== LINKE SPALTE: EINSTELLUNGEN ========== #
+        
+        # Lautstärke-Normalisierung
+        lufs_title = ctk.CTkLabel(left_frame, 
+                                 text="Lautstärke-Normalisierung", 
+                                 font=ctk.CTkFont(size=18, weight="bold"))
+        lufs_title.pack(pady=(15, 8))
+        
+        lufs_container = ctk.CTkFrame(left_frame)
+        lufs_container.pack(fill="x", padx=15, pady=(0, 15))
+        
+        lufs_label = ctk.CTkLabel(lufs_container, text="Ziel-Lautstärke (LUFS):", 
+                                 font=ctk.CTkFont(size=14, weight="bold"))
+        lufs_label.pack(pady=8)
+        
+        self.lufs_var = ctk.DoubleVar(value=-15.0)
+        lufs_slider = ctk.CTkSlider(lufs_container, from_=-23.0, to=-10.0,
+                                   variable=self.lufs_var, width=400)
+        lufs_slider.pack(pady=5)
+        
+        self.lufs_value_label = ctk.CTkLabel(lufs_container, text="-15.0 LUFS", 
+                                           font=ctk.CTkFont(size=12))
+        self.lufs_value_label.pack(pady=3)
+        lufs_slider.configure(command=self.update_lufs_label)
+        
+        lufs_help = ctk.CTkLabel(lufs_container, 
+                                text="-23 LUFS = Leise • -15 LUFS = Normal • -10 LUFS = Laut", 
+                                font=ctk.CTkFont(size=11), 
+                                text_color="gray")
+        lufs_help.pack(pady=(0, 8))
+
+        # Methoden-Auswahl
+        method_title = ctk.CTkLabel(left_frame, 
+                                   text="Rauschreduzierungs-Methode", 
+                                   font=ctk.CTkFont(size=18, weight="bold"))
+        method_title.pack(pady=(8, 8))
+        
+        self.method_var = ctk.StringVar()
+        
+        # Standard-Methode setzen
+        if DEEPFILTERNET_AVAILABLE:
+            self.method_var.set("deepfilternet3")
+        else:
+            self.method_var.set("audacity")
+        
+        methods_container = ctk.CTkFrame(left_frame)
+        methods_container.pack(fill="x", padx=15, pady=(0, 15))
+        
+        if DEEPFILTERNET_AVAILABLE:
+            dfn_radio = ctk.CTkRadioButton(methods_container, 
+                                          text="DeepFilterNet3 (KI-basiert)", 
+                                          variable=self.method_var, 
+                                          value="deepfilternet3",
+                                          font=ctk.CTkFont(size=13, weight="bold"))
+            dfn_radio.pack(anchor="w", padx=15, pady=5)
+            
+            dfn_desc = ctk.CTkLabel(methods_container, 
+                                   text="Beste Qualität • 48kHz • Modernste KI", 
+                                   font=ctk.CTkFont(size=11), 
+                                   text_color="gray")
+            dfn_desc.pack(anchor="w", padx=35, pady=(0, 8))
+        
+        audacity_radio = ctk.CTkRadioButton(methods_container, 
+                                           text="Audacity (Spektral-Rauschreduzierung)", 
+                                           variable=self.method_var, 
+                                           value="audacity",
+                                           font=ctk.CTkFont(size=13, weight="bold"))
+        audacity_radio.pack(anchor="w", padx=15, pady=5)
+        
+        audacity_desc = ctk.CTkLabel(methods_container, 
+                                    text="Zuverlässig • Konfigurierbar • Bewährt", 
+                                    font=ctk.CTkFont(size=11), 
+                                    text_color="gray")
+        audacity_desc.pack(anchor="w", padx=35, pady=(0, 8))
+
+        # Parameter-Tabs
+        params_title = ctk.CTkLabel(left_frame, 
+                                   text="Parameter", 
+                                   font=ctk.CTkFont(size=18, weight="bold"))
+        params_title.pack(pady=(8, 8))
+        
+        tabview = ctk.CTkTabview(left_frame, width=500, height=280)
+        tabview.pack(fill="x", padx=15, pady=(0, 15))
+        
+        # Tab 1: DeepFilterNet3
+        tab1 = tabview.add("DeepFilterNet3")
+        
+        atten_label = ctk.CTkLabel(tab1, text="Dämpfungsgrenze (dB):", 
+                                  font=ctk.CTkFont(size=13, weight="bold"))
+        atten_label.pack(pady=(15, 5))
+        
+        self.attenuation_var = ctk.DoubleVar(value=80.0)
+        atten_slider = ctk.CTkSlider(tab1, from_=20.0, to=100.0, 
+                                    variable=self.attenuation_var, width=350)
+        atten_slider.pack(pady=5)
+        
+        self.atten_value_label = ctk.CTkLabel(tab1, text="80.0 dB", 
+                                            font=ctk.CTkFont(size=12))
+        self.atten_value_label.pack(pady=5)
+        atten_slider.configure(command=self.update_atten_label)
+        
+        atten_help = ctk.CTkLabel(tab1, 
+                                 text="Niedriger = Stärker (mehr Verzerrung)\nHöher = Sanfter (weniger effektiv)\nEmpfehlung: 70-85 dB", 
+                                 font=ctk.CTkFont(size=11), 
+                                 text_color="gray")
+        atten_help.pack(pady=10)
+        
+        # Tab 2: Audacity (Scrollbarer Container)
+        tab2 = tabview.add("Audacity")
+        
+        audacity_scroll = ctk.CTkScrollableFrame(tab2, width=450, height=240)
+        audacity_scroll.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Rauschunterdrückung
+        noise_label = ctk.CTkLabel(audacity_scroll, text="Rauschunterdrückung (dB):", 
+                                  font=ctk.CTkFont(size=12, weight="bold"))
+        noise_label.pack(pady=(10, 3))
+        
+        self.noise_gain_var = ctk.DoubleVar(value=12.0)
+        noise_slider = ctk.CTkSlider(audacity_scroll, from_=6.0, to=30.0, 
+                                    variable=self.noise_gain_var, width=350)
+        noise_slider.pack(pady=3)
+        
+        self.noise_value_label = ctk.CTkLabel(audacity_scroll, text="12.0 dB", font=ctk.CTkFont(size=11))
+        self.noise_value_label.pack(pady=2)
+        noise_slider.configure(command=self.update_noise_label)
+        
+        noise_help = ctk.CTkLabel(audacity_scroll, 
+                                 text="Höher = Stärkere Rauschreduzierung • Niedriger = Natürlicherer Klang", 
+                                 font=ctk.CTkFont(size=10), 
+                                 text_color="gray")
+        noise_help.pack(pady=(0, 15))
+        
+        # Empfindlichkeit
+        sens_label = ctk.CTkLabel(audacity_scroll, text="Empfindlichkeit:", 
+                                 font=ctk.CTkFont(size=12, weight="bold"))
+        sens_label.pack(pady=(5, 3))
+        
+        self.sensitivity_var = ctk.DoubleVar(value=6.0)
+        sens_slider = ctk.CTkSlider(audacity_scroll, from_=0.0, to=20.0, 
+                                   variable=self.sensitivity_var, width=350)
+        sens_slider.pack(pady=3)
+        
+        self.sens_value_label = ctk.CTkLabel(audacity_scroll, text="6.0", font=ctk.CTkFont(size=11))
+        self.sens_value_label.pack(pady=2)
+        sens_slider.configure(command=self.update_sens_label)
+        
+        sens_help = ctk.CTkLabel(audacity_scroll, 
+                                text="Höher = Mehr wird als Rauschen erkannt • Niedriger = Nur offensichtliches Rauschen", 
+                                font=ctk.CTkFont(size=10), 
+                                text_color="gray")
+        sens_help.pack(pady=(0, 15))
+        
+        # Frequenz-Glättung
+        freq_label = ctk.CTkLabel(audacity_scroll, text="Frequenz-Glättung:", 
+                                 font=ctk.CTkFont(size=12, weight="bold"))
+        freq_label.pack(pady=(5, 3))
+        
+        self.freq_smooth_var = ctk.IntVar(value=0)
+        freq_slider = ctk.CTkSlider(audacity_scroll, from_=0, to=10, 
+                                   variable=self.freq_smooth_var, width=350, number_of_steps=10)
+        freq_slider.pack(pady=3)
+        
+        self.freq_value_label = ctk.CTkLabel(audacity_scroll, text="0", font=ctk.CTkFont(size=11))
+        self.freq_value_label.pack(pady=2)
+        freq_slider.configure(command=self.update_freq_label)
+        
+        freq_help = ctk.CTkLabel(audacity_scroll, 
+                                text="0 = Keine Glättung • Höher = Weniger 'musikartige' Artefakte", 
+                                font=ctk.CTkFont(size=10), 
+                                text_color="gray")
+        freq_help.pack(pady=(0, 20))
+
+        # ========== RECHTE SPALTE: DATEIEN UND OPTIONEN ========== #
+        
+        # Dateinamen-Optionen
+        filename_title = ctk.CTkLabel(right_frame, 
+                                     text="Dateinamen-Optionen", 
+                                     font=ctk.CTkFont(size=18, weight="bold"))
+        filename_title.pack(pady=(15, 8))
+        
+        filename_container = ctk.CTkFrame(right_frame)
+        filename_container.pack(fill="x", padx=15, pady=(0, 15))
+        
+        self.filename_mode_var = ctk.StringVar(value="suffix")
+        
+        # Radio Button 1: Suffix verwenden
+        suffix_radio_frame = ctk.CTkFrame(filename_container)
+        suffix_radio_frame.pack(fill="x", padx=8, pady=5)
+        
+        self.suffix_radio = ctk.CTkRadioButton(suffix_radio_frame, 
+                                              text="Suffix verwenden:", 
+                                              variable=self.filename_mode_var, 
+                                              value="suffix",
+                                              font=ctk.CTkFont(size=13, weight="bold"))
+        self.suffix_radio.pack(side="left", padx=8)
+        
+        self.suffix_var = ctk.StringVar(value="restauriert")
+        self.suffix_entry = ctk.CTkEntry(suffix_radio_frame, textvariable=self.suffix_var, 
+                                        placeholder_text="z.B. verbessert, KI, bearbeitet...",
+                                        width=220, font=ctk.CTkFont(size=12))
+        self.suffix_entry.pack(side="left", padx=8, expand=True, fill="x")
+        
+        # Automatische Auswahl bei Texteingabe
+        self.suffix_entry.bind('<KeyPress>', self.on_suffix_keypress)
+        self.suffix_entry.bind('<Button-1>', self.on_suffix_click)
+        
+        # Radio Button 2: Original-Namen verwenden
+        original_radio = ctk.CTkRadioButton(filename_container, 
+                                           text="Ursprünglichen Dateinamen verwenden", 
+                                           variable=self.filename_mode_var, 
+                                           value="original",
+                                           font=ctk.CTkFont(size=13, weight="bold"))
+        original_radio.pack(anchor="w", padx=15, pady=8)
+        
+        # Zielspeicherort
+        output_title = ctk.CTkLabel(right_frame, 
+                                   text="Zielspeicherort", 
+                                   font=ctk.CTkFont(size=18, weight="bold"))
+        output_title.pack(pady=(8, 8))
+        
+        output_container = ctk.CTkFrame(right_frame)
+        output_container.pack(fill="x", padx=15, pady=(0, 15))
+        
+        # Radio Button-Logik für Zielspeicherort
+        self.output_mode_var = ctk.StringVar(value="original_location")
+        
+        # Radio Button 1: Neben Original-Dateien (Standard)
+        original_location_radio = ctk.CTkRadioButton(output_container, 
+                                                    text="Neben Original-Dateien speichern", 
+                                                    variable=self.output_mode_var,
+                                                    value="original_location",
+                                                    command=self.on_output_mode_change,
+                                                    font=ctk.CTkFont(size=13, weight="bold"))
+        original_location_radio.pack(anchor="w", padx=15, pady=5)
+        
+        # Radio Button 2: Eigener Ordner
+        custom_dir_frame = ctk.CTkFrame(output_container)
+        custom_dir_frame.pack(fill="x", padx=15, pady=5)
+        
+        custom_dir_radio = ctk.CTkRadioButton(custom_dir_frame, 
+                                             text="Eigenen Ordner verwenden:", 
+                                             variable=self.output_mode_var,
+                                             value="custom_dir",
+                                             command=self.on_output_mode_change,
+                                             font=ctk.CTkFont(size=13, weight="bold"))
+        custom_dir_radio.pack(side="left", padx=8)
+        
+        self.output_dir_var = ctk.StringVar(value="")
+        self.output_entry = ctk.CTkEntry(custom_dir_frame, textvariable=self.output_dir_var, 
+                                        placeholder_text="Ordner auswählen...",
+                                        state="disabled", font=ctk.CTkFont(size=12))
+        self.output_entry.pack(side="left", padx=8, expand=True, fill="x")
+        
+        self.browse_btn = ctk.CTkButton(custom_dir_frame, text="📁", 
+                                       command=self.browse_output_dir, width=50,
+                                       state="disabled")
+        self.browse_btn.pack(side="right", padx=8)
+
+        # Video-Liste
+        list_title = ctk.CTkLabel(right_frame, 
+                                 text="Video-Dateien", 
+                                 font=ctk.CTkFont(size=18, weight="bold"))
+        list_title.pack(pady=(8, 8))
+        
+        # BEREINIGTER INFO-TEXT (ohne Drag & Drop)
+        drop_info = ctk.CTkLabel(right_frame, 
+                                text="Über Button Videos auswählen", 
+                                font=ctk.CTkFont(size=12), 
+                                text_color="gray")
+        drop_info.pack(pady=3)
+        
+        # Listbox Container
+        listbox_container = ctk.CTkFrame(right_frame)
+        listbox_container.pack(fill="both", expand=True, padx=15, pady=8)
+        
+        # Tkinter Listbox
+        self.listbox = tk.Listbox(listbox_container, selectmode=tk.EXTENDED, 
+                                 height=6, font=("Arial", 10),
+                                 bg="#212121", fg="white", 
+                                 selectbackground="#1f538d")
+        self.listbox.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # Control-Buttons
+        buttons_container = ctk.CTkFrame(right_frame)
+        buttons_container.pack(fill="x", padx=15, pady=8)
+        
+        # Erste Reihe: Videos auswählen + START/ABBRECHEN BUTTON
+        top_buttons = ctk.CTkFrame(buttons_container)
+        top_buttons.pack(fill="x", pady=(8, 5))
+        
+        top_button_grid = ctk.CTkFrame(top_buttons)
+        top_button_grid.pack(fill="x", padx=10)
+        
+        self.select_btn = ctk.CTkButton(top_button_grid, text="📁 Videos auswählen", 
+                                       command=self.select_files, 
+                                       font=ctk.CTkFont(size=13, weight="bold"),
+                                       height=45, width=200)
+        self.select_btn.pack(side="left", padx=(0, 10))
+        
+        # Spacer für gleichmäßigen Abstand
+        spacer1 = ctk.CTkFrame(top_button_grid, width=10, height=1, fg_color="transparent")
+        spacer1.pack(side="left", expand=True, fill="x")
+        
+        # START/ABBRECHEN BUTTON (DYNAMISCH)
+        self.start_btn = ctk.CTkButton(top_button_grid, text="🚀 Verarbeitung starten", 
+                                      command=self.start_processing, 
+                                      font=ctk.CTkFont(size=13, weight="bold"),
+                                      height=45, width=200, state="disabled",
+                                      fg_color=("#2CC985", "#2FA572"),
+                                      hover_color=("#26B77C", "#2B9966"))
+        self.start_btn.pack(side="right", padx=(10, 0))
+        
+        # ABBRECHEN BUTTON (VERSTECKT, WIRD BEI VERARBEITUNG ANGEZEIGT)
+        self.cancel_btn = ctk.CTkButton(top_button_grid, text="⏹️ Abbrechen", 
+                                       command=self.cancel_processing, 
+                                       font=ctk.CTkFont(size=13, weight="bold"),
+                                       height=45, width=200,
+                                       fg_color=("#FF6B6B", "#E55555"),
+                                       hover_color=("#FF5252", "#D64545"))
+        # Versteckt bei Start
+        
+        # Zweite Reihe: Element entfernen + Liste leeren
+        bottom_buttons = ctk.CTkFrame(buttons_container)
+        bottom_buttons.pack(fill="x", pady=(5, 8))
+        
+        bottom_button_grid = ctk.CTkFrame(bottom_buttons)
+        bottom_button_grid.pack(fill="x", padx=10)
+        
+        self.remove_btn = ctk.CTkButton(bottom_button_grid, text="❌ Element entfernen", 
+                                       command=self.remove_selected, 
+                                       font=ctk.CTkFont(size=12),
+                                       height=40, width=200)
+        self.remove_btn.pack(side="left", padx=(0, 10))
+        
+        # Spacer für gleichmäßigen Abstand
+        spacer2 = ctk.CTkFrame(bottom_button_grid, width=10, height=1, fg_color="transparent")
+        spacer2.pack(side="left", expand=True, fill="x")
+        
+        self.clear_btn = ctk.CTkButton(bottom_button_grid, text="🗑️ Liste leeren", 
+                                      command=self.clear_list, 
+                                      font=ctk.CTkFont(size=12),
+                                      height=40, width=200)
+        self.clear_btn.pack(side="right", padx=(10, 0))
+
+        # ========== UNTEN: STATUS UND PROGRESS ========== #
+        bottom_frame = ctk.CTkFrame(self)
+        bottom_frame.pack(fill="x", padx=15, pady=(0, 15))
+        
+        self.status_label = ctk.CTkLabel(bottom_frame, 
+                                        text="✅ Bereit für Verarbeitung", 
+                                        font=ctk.CTkFont(size=13))
+        self.status_label.pack(pady=12)
+        
+        self.progress = ctk.CTkProgressBar(bottom_frame, width=700)
+        self.progress.pack(pady=(0, 12))
+        self.progress.set(0)
+
+        # Tab-Navigation aktivieren
+        tabview.set("DeepFilterNet3")
+
+    # ========== HELPER METHODS ========== #
+    
+    def update_lufs_label(self, value):
+        self.lufs_value_label.configure(text=f"{float(value):.1f} LUFS")
+    
+    def update_atten_label(self, value):
+        self.atten_value_label.configure(text=f"{float(value):.1f} dB")
+    
+    def update_noise_label(self, value):
+        self.noise_value_label.configure(text=f"{float(value):.1f} dB")
+    
+    def update_sens_label(self, value):
+        self.sens_value_label.configure(text=f"{float(value):.1f}")
+    
+    def update_freq_label(self, value):
+        self.freq_value_label.configure(text=str(int(float(value))))
+    
+    def on_suffix_keypress(self, event):
+        """Automatische Auswahl von 'suffix' Radio Button bei Texteingabe"""
+        self.filename_mode_var.set("suffix")
+    
+    def on_suffix_click(self, event):
+        """Automatische Auswahl von 'suffix' Radio Button bei Klick ins Textfeld"""
+        self.filename_mode_var.set("suffix")
+    
+    # Radio Button-Logik für Zielspeicherort
+    def on_output_mode_change(self):
+        """Aktiviert/Deaktiviert Entry und Browse-Button je nach Auswahl"""
+        if self.output_mode_var.get() == "custom_dir":
+            self.output_entry.configure(state="normal")
+            self.browse_btn.configure(state="normal")
+        else:
+            self.output_entry.configure(state="disabled")
+            self.browse_btn.configure(state="disabled")
+    
+    def browse_output_dir(self):
+        directory = filedialog.askdirectory(title="Zielspeicherort für restaurierte Videos auswählen")
+        if directory:
+            self.output_dir_var.set(directory)
+
+    def update_listbox_status(self, file_path, status_icon):
+        """Aktualisiert den Status-Icon eines Listbox-Eintrags"""
+        try:
+            # Finde den entsprechenden Listbox-Eintrag
+            for i in range(self.listbox.size()):
+                item_text = self.listbox.get(i)
+                # Entferne bereits vorhandene Status-Icons
+                cleaned_text = item_text
+                for icon in ["✅", "❌", "⏹️", "🔄"]:
+                    if cleaned_text.startswith(icon + " "):
+                        cleaned_text = cleaned_text[2:]  # Entferne Icon + Leerzeichen
+                        break
+                
+                # Prüfe ob dies der gesuchte Eintrag ist
+                if cleaned_text in self.file_paths and self.file_paths[cleaned_text] == file_path:
+                    # Aktualisiere den Eintrag mit neuem Status-Icon
+                    new_text = f"{status_icon} {cleaned_text}"
+                    self.listbox.delete(i)
+                    self.listbox.insert(i, new_text)
+                    break
+        except Exception as e:
+            print(f"Fehler beim Aktualisieren des Listbox-Status: {e}")
+
+    # ========== BUTTON STYLING METHODS ========== #
+    
+    def update_button_states(self):
+        """Aktualisiert Button-Status mit korrigierten Farben"""
+        has_files = len(self.file_paths) > 0
+        
+        if not self.is_processing:
+            # Normal-Modus: Start-Button je nach Dateien aktivieren/deaktivieren
+            if has_files:
+                self.start_btn.configure(state="normal", fg_color=("#2CC985", "#2FA572"))
+            else:
+                # TRANSPARENTER DISABLED-BUTTON
+                self.start_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+            
+            # ANDERE BUTTONS AUF STANDARD-BLAU ZURÜCKSETZEN
+            self.select_btn.configure(state="normal", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
+            
+            if has_files:
+                self.remove_btn.configure(state="normal", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
+                self.clear_btn.configure(state="normal", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
+            else:
+                self.remove_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+                self.clear_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+
+    # ========== FILE MANAGEMENT ========== #
+    
+    def select_files(self):
+        files = filedialog.askopenfilenames(
+            title="Videodateien für Audio-Restauration auswählen", 
+            filetypes=[
+                ("Alle Videos", "*.mp4 *.mov *.mkv *.avi *.m4v *.webm *.flv *.wmv"),
+                ("MP4-Dateien", "*.mp4"),
+                ("MOV-Dateien", "*.mov"),
+                ("MKV-Dateien", "*.mkv"),
+                ("AVI-Dateien", "*.avi"),
+                ("Alle Dateien", "*.*")
+            ]
+        )
+        for f in files:
+            self.add_file(f)
+    
+    def add_file(self, path):
+        if path not in self.file_paths.values():
+            try:
+                size_mb = os.path.getsize(path) / (1024*1024)
+                display_name = f"{os.path.basename(path)} ({size_mb:.1f} MB)"
+                self.listbox.insert(tk.END, display_name)
+                
+                self.file_paths[display_name] = path
+                
+                total_files = len(self.file_paths)
+                total_size = sum(os.path.getsize(p) for p in self.file_paths.values()) / (1024*1024)
+                self.status_label.configure(text=f"{total_files} Dateien geladen ({total_size:.1f} MB gesamt)")
+                
+                self.update_button_states()
+                
+            except Exception as e:
+                display_name = os.path.basename(path)
+                self.listbox.insert(tk.END, display_name)
+                self.file_paths[display_name] = path
+                self.update_button_states()
+    
+    def remove_selected(self):
+        selected_indices = list(self.listbox.curselection())
+        for index in reversed(selected_indices):
+            item = self.listbox.get(index)
+            if item in self.file_paths:
+                del self.file_paths[item]
+            self.listbox.delete(index)
+            
+        if not self.listbox.size():
+            self.status_label.configure(text="Keine Dateien geladen")
+        else:
+            total_files = len(self.file_paths)
+            self.status_label.configure(text=f"{total_files} Dateien geladen")
+        
+        self.update_button_states()
+    
+    def clear_list(self):
+        self.listbox.delete(0, tk.END)
+        self.file_paths.clear()
+        self.status_label.configure(text="Liste geleert")
+        self.update_button_states()
+
+    # ========== PROCESSING MIT ABBRECHEN-FUNKTIONALITÄT ========== #
+    
+    def start_processing(self):
+        if not self.file_paths:
+            messagebox.showwarning("Keine Dateien", "Bitte wählen Sie erst Videodateien aus.")
+            return
+            
+        self.is_processing = True
+        self.stop_event.clear()
+        
+        # Zähler zurücksetzen
+        self.processed_files = 0
+        self.successful_files = 0
+        self.cancelled_files = 0
+        self.warnings = []
+        self.errors = []
+        
+        # UI für Verarbeitung anpassen
+        self.start_btn.pack_forget()
+        self.cancel_btn.pack(side="right", padx=(10, 0))
+        
+        # Andere Buttons deaktivieren
+        self.select_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+        self.remove_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+        self.clear_btn.configure(state="disabled", fg_color=("#404040", "#303030"))
+        
+        self.progress.set(0)
+        
+        method = self.method_var.get()
+        method_names = {
+            "deepfilternet3": "DeepFilterNet3 KI",
+            "audacity": "Audacity Spektral"
+        }
+        
+        method_name = method_names.get(method, method)
+        lufs_value = self.lufs_var.get()
+        self.status_label.configure(text=f"Verarbeitung gestartet mit {method_name} (LUFS: {lufs_value})...")
+
+        # Parameter sammeln
+        if method == "deepfilternet3":
+            method_params = {
+                'attenuation_limit': self.attenuation_var.get()
+            }
+        else:  # audacity
+            method_params = {
+                'rauschunterdrückung': self.noise_gain_var.get(),
+                'empfindlichkeit': self.sensitivity_var.get(),
+                'frequenzglättung': self.freq_smooth_var.get(),
+                'window_size': 2048,
+                'zeitglättung': 20
+            }
+        
+        # Dateinamen-Optionen
+        filename_mode = self.filename_mode_var.get()
+        custom_suffix = self.suffix_var.get() if filename_mode == "suffix" else ""
+        
+        # Zielspeicherort-Optionen
+        output_dir = None
+        if self.output_mode_var.get() == "custom_dir":
+            output_dir = self.output_dir_var.get() if self.output_dir_var.get().strip() else None
+
+        # Dateien zur Warteschlange hinzufügen
+        for display_name, real_path in self.file_paths.items():
+            self.file_queue.put((real_path, method, method_params, filename_mode, custom_suffix, output_dir, lufs_value))
+
+        self.worker_thread = threading.Thread(target=self.worker, daemon=True)
+        self.worker_thread.start()
+        self.after(200, self.check_results)
+    
+    def cancel_processing(self):
+        """Bricht die laufende Verarbeitung ab"""
+        self.stop_event.set()
+        self.status_label.configure(text="⏹️ Verarbeitung wird abgebrochen...")
+        self.cancel_btn.configure(state="disabled", text="Bricht ab...", fg_color=("#808080", "#606060"))
+        
+        # Sofortige Queue-Leerung für noch nicht gestartete Dateien
+        remaining_files = 0
+        while not self.file_queue.empty():
+            try:
+                path, method, params, filename_mode, suffix, out_dir, lufs = self.file_queue.get_nowait()
+                self.result_queue.put(("cancelled", path, "Verarbeitung vor Start abgebrochen"))
+                remaining_files += 1
+            except queue.Empty:
+                break
+        
+        if remaining_files > 0:
+            print(f"⏹️ {remaining_files} noch nicht gestartete Dateien als abgebrochen markiert")
+        
+        # Forcierte Beendigung nach Timeout
+        def force_end():
+            if self.is_processing:
+                print("🚨 Erzwinge Beendigung nach Timeout")
+                self.reset_ui_after_processing()
+                messagebox.showwarning("Abbruch erzwungen", 
+                                     "Die Verarbeitung wurde nach Timeout zwangsweise beendet.\n"
+                                     "Aktuell verarbeitete Datei könnte unvollständig sein.")
+        
+        # Timeout für erzwungene Beendigung (5 Sekunden)
+        self.after(5000, force_end)
+    
+    def reset_ui_after_processing(self):
+        """Setzt die UI nach der Verarbeitung zurück"""
+        self.is_processing = False
+        
+        # Buttons zurücksetzen
+        self.cancel_btn.pack_forget()
+        self.start_btn.pack(side="right", padx=(10, 0))
+        self.cancel_btn.configure(state="normal", text="⏹️ Abbrechen", fg_color=("#FF6B6B", "#E55555"))
+        
+        # Button-Status aktualisieren
+        self.update_button_states()
+    
+    def worker(self):
+        while not self.file_queue.empty() and not self.stop_event.is_set():
+            try:
+                path, method, params, filename_mode, suffix, out_dir, lufs = self.file_queue.get_nowait()
+                
+                # Sofortige Abbruch-Prüfung vor Verarbeitung
+                if self.stop_event.is_set():
+                    self.result_queue.put(("cancelled", path, "Verarbeitung vor Start abgebrochen"))
+                    continue
+                    
+                self.result_queue.put(("processing", path, f"Starte {method}"))
+                process_video(path, self.result_queue, method, params, filename_mode, suffix, out_dir, lufs, self.stop_event)
+                
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"Worker-Fehler: {e}")
+                if 'path' in locals():
+                    self.result_queue.put(("error", path, f"Worker-Fehler: {str(e)}"))
+        
+        # Finale Queue-Leerung bei Abbruch
+        if self.stop_event.is_set():
+            while not self.file_queue.empty():
+                try:
+                    path, _, _, _, _, _, _ = self.file_queue.get_nowait()
+                    self.result_queue.put(("cancelled", path, "Verarbeitung abgebrochen"))
+                except queue.Empty:
+                    break
+        
+        print(f"🔚 Worker-Thread beendet. Stop-Event: {self.stop_event.is_set()}")
+    
+    def check_results(self):
+        total_files = len(self.file_paths)
+        
+        # Alle Nachrichten aus der Queue verarbeiten
+        while not self.result_queue.empty():
+            try:
+                status, src, info = self.result_queue.get()
+                
+                if status == "processing":
+                    filename = os.path.basename(src)
+                    self.status_label.configure(text=f"Verarbeite: {filename}")
+                    self.update_listbox_status(src, "🔄")
+                    
+                elif status == "done":
+                    self.processed_files += 1
+                    self.successful_files += 1
+                    progress_value = self.processed_files / total_files
+                    self.progress.set(progress_value)
+                    filename = os.path.basename(src)
+                    self.status_label.configure(text=f"✅ Fertig: {filename}")
+                    self.update_listbox_status(src, "✅")
+                    
+                elif status == "cancelled":
+                    self.cancelled_files += 1
+                    self.processed_files += 1
+                    progress_value = self.processed_files / total_files
+                    self.progress.set(progress_value)
+                    filename = os.path.basename(src)
+                    self.status_label.configure(text=f"⏹️ Abgebrochen: {filename}")
+                    self.update_listbox_status(src, "⏹️")
+                    
+                elif status == "warning":
+                    self.warnings.append(f"{os.path.basename(src)}: {info}")
+                    self.status_label.configure(text=f"⚠️ Warnung: {os.path.basename(src)}")
+                    
+                elif status == "error":
+                    self.processed_files += 1
+                    progress_value = self.processed_files / total_files
+                    self.progress.set(progress_value)
+                    self.errors.append(f"{os.path.basename(src)}: {info}")
+                    self.status_label.configure(text=f"❌ Fehler: {os.path.basename(src)}")
+                    self.update_listbox_status(src, "❌")
+                    
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"Fehler beim Verarbeiten der Queue: {e}")
+
+        # Verbesserte Abbruch-Erkennung
+        all_files_processed = self.processed_files == total_files
+        was_cancelled = self.stop_event.is_set()
+        worker_finished = self.worker_thread is None or not self.worker_thread.is_alive()
+        
+        # Sofortige Abbruch-Behandlung wenn stop_event gesetzt ist
+        if was_cancelled and (self.cancelled_files > 0 or worker_finished):
+            # Verarbeitung ist abgebrochen
+            result_text = f"⏹️ Verarbeitung wurde abgebrochen!\n\n"
+            result_text += f"✅ Erfolgreich verarbeitet: {self.successful_files} von {total_files} Dateien\n"
+            
+            if self.cancelled_files > 0:
+                result_text += f"⏹️ Abgebrochen: {self.cancelled_files} Dateien\n"
+            if len(self.errors) > 0:
+                result_text += f"❌ Fehler: {len(self.errors)} Dateien\n"
+            if self.warnings:
+                result_text += f"⚠️ Warnungen: {len(self.warnings)} Dateien\n"
+            
+            # Unverarbeitete Dateien berechnen
+            unprocessed = total_files - self.processed_files
+            if unprocessed > 0:
+                result_text += f"📋 Nicht verarbeitet: {unprocessed} Dateien\n"
+            
+            if self.warnings or self.errors:
+                result_text += f"\nDetails:\n"
+                if self.warnings:
+                    result_text += "Warnungen: " + "; ".join(self.warnings[:2]) + "\n"
+                if self.errors:
+                    result_text += "Fehler: " + "; ".join(self.errors[:2])
+            
+            messagebox.showwarning("Verarbeitung abgebrochen", result_text)
+            self.status_label.configure(text=f"⏹️ Verarbeitung abgebrochen - {self.successful_files} von {total_files} Dateien verarbeitet")
+            self.reset_ui_after_processing()
+            return
+            
+        elif all_files_processed:
+            # Normale Erfolgsmeldung (nur wenn nicht abgebrochen)
+            result_text = f"Verarbeitung erfolgreich abgeschlossen!\n\n"
+            result_text += f"✅ Erfolgreich: {self.successful_files}/{total_files} Dateien\n"
+            
+            if self.warnings:
+                result_text += f"⚠️ Warnungen: {len(self.warnings)}\n"
+            if self.errors:
+                result_text += f"❌ Fehler: {len(self.errors)}\n"
+            
+            if self.warnings or self.errors:
+                result_text += f"\nDetails:\n"
+                if self.warnings:
+                    result_text += "Warnungen: " + "; ".join(self.warnings[:2]) + "\n"
+                if self.errors:
+                    result_text += "Fehler: " + "; ".join(self.errors[:2])
+            
+            if self.errors:
+                messagebox.showerror("Verarbeitung abgeschlossen (mit Fehlern)", result_text)
+            elif self.warnings:
+                messagebox.showwarning("Verarbeitung abgeschlossen (mit Warnungen)", result_text)
+            else:
+                messagebox.showinfo("Erfolgreich abgeschlossen", result_text)
+            
+            self.status_label.configure(text=f"🎉 Fertig: {self.successful_files}/{total_files} Dateien erfolgreich verarbeitet!")
+            self.reset_ui_after_processing()
+            return
+        
+        # Weiter prüfen, solange noch Verarbeitung läuft
+        if self.is_processing:
+            self.after(200, self.check_results)
+
+
+if __name__ == "__main__":
+    print("🎵 Audio-Restaurationstool v0.6.8 wird gestartet...")
+    print(f"🤖 DeepFilterNet3: {'✅ Verfügbar' if DEEPFILTERNET_AVAILABLE else '❌ Nicht verfügbar'}")
+    print("🎛️ Audacity: ✅ Verfügbar")
+    print("🔧 FFmpeg-Fallback: ✅ Verfügbar")
+    
+    app = AudioRestorerGUIFinal()
+    app.mainloop()
