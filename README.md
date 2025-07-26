@@ -343,7 +343,18 @@ Dämpfung: 75-80 dB
 
 ## 📝 Lizenz
 
-Dieses Projekt steht unter der MIT-Lizenz. Siehe [LICENSE](LICENSE) für Details.
+Dieses Projekt steht unter der GNU General Public License v3.0. Siehe [LICENSE](LICENSE) für Details.
+
+### Was bedeutet GPL-3.0?
+
+- ✅ **Freie Nutzung**: Sie können das Programm kostenlos verwenden
+- ✅ **Quellcode einsehen**: Der gesamte Code ist öffentlich verfügbar  
+- ✅ **Änderungen erlaubt**: Sie dürfen den Code modifizieren
+- ✅ **Weiterverteilung**: Sie dürfen das Programm weitergeben
+- ⚠️ **Copyleft**: Änderungen müssen ebenfalls unter GPL-3.0 veröffentlicht werden
+- ⚠️ **Keine Garantie**: Das Programm wird ohne Gewährleistung bereitgestellt
+
+**Kurz gesagt**: Sie können alles damit machen, aber Verbesserungen müssen der Community zur Verfügung gestellt werden.
 
 ---
 
