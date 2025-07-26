@@ -1,4 +1,4 @@
-# 🎵 Audio-Restaurationstool v0.6.8
+# 🎵 Audio-Restaurationstool v1.0.0
 
 Ein professionelles Tool zur KI-gestützten Audio-Restauration aus Videos mit deutscher Benutzeroberfläche.
 
