@@ -82,7 +82,7 @@ class Dimensions:
     """Abmessungen und Größen"""
     # Fenster
     WINDOW_WIDTH = 1100
-    WINDOW_HEIGHT = 860
+    WINDOW_HEIGHT = 950
     
     # Buttons
     BUTTON_LARGE_WIDTH = 200

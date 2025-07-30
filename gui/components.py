@@ -17,7 +17,7 @@ class ParameterSlider(ctk.CTkFrame):
         self.unit = unit
         
         # Label
-        self.label = ctk.CTkLabel(self, text=label, font=Fonts.LABEL_BOLD())  # ← () HINZUGEFÜGT
+        self.label = ctk.CTkLabel(self, text=label, font=Fonts.LABEL_BOLD())  
         self.label.pack(pady=(10, 3))
         
         # Variable
@@ -29,7 +29,7 @@ class ParameterSlider(ctk.CTkFrame):
         self.slider.configure(command=self._on_change)
         
         # Wert-Label
-        self.value_label = ctk.CTkLabel(self, text=f"{initial_value} {unit}", font=Fonts.SMALL_HELP())  # ← () HINZUGEFÜGT
+        self.value_label = ctk.CTkLabel(self, text=f"{initial_value} {unit}", font=Fonts.SMALL_HELP())  
         self.value_label.pack(pady=2)
         
         # Hilfetext
@@ -76,7 +76,7 @@ class IntegerSlider(ctk.CTkFrame):
         self.callback = callback
         
         # Label
-        self.label = ctk.CTkLabel(self, text=label, font=Fonts.LABEL_BOLD())  # ← () HINZUGEFÜGT
+        self.label = ctk.CTkLabel(self, text=label, font=Fonts.LABEL_BOLD())  
         self.label.pack(pady=(10, 3))
         
         # Variable
@@ -89,12 +89,12 @@ class IntegerSlider(ctk.CTkFrame):
         self.slider.configure(command=self._on_change)
         
         # Wert-Label
-        self.value_label = ctk.CTkLabel(self, text=str(initial_value), font=Fonts.SMALL_HELP())  # ← () HINZUGEFÜGT
+        self.value_label = ctk.CTkLabel(self, text=str(initial_value), font=Fonts.SMALL_HELP())  
         self.value_label.pack(pady=2)
         
         # Hilfetext
         if help_text:
-            self.help_label = ctk.CTkLabel(self, text=help_text, font=Fonts.SMALL_HELP(), text_color="gray")  # ← () HINZUGEFÜGT
+            self.help_label = ctk.CTkLabel(self, text=help_text, font=Fonts.SMALL_HELP(), text_color="gray")  
             self.help_label.pack(pady=(0, 15))
     
     def _on_change(self, value: float) -> None:
@@ -209,7 +209,7 @@ class RadioButtonGroup(ctk.CTkFrame):
                 text=text, 
                 variable=self.variable, 
                 value=value,
-                font=Fonts.BUTTON_SMALL()  # ← () HINZUGEFÜGT
+                font=Fonts.BUTTON_SMALL()  
             )
             radio_btn.pack(anchor="w", padx=15, pady=5)
             self.buttons[value] = radio_btn
@@ -219,7 +219,7 @@ class RadioButtonGroup(ctk.CTkFrame):
                 desc_label = ctk.CTkLabel(
                     self, 
                     text=description, 
-                    font=Fonts.HELP_TEXT(),  # ← () HINZUGEFÜGT
+                    font=Fonts.HELP_TEXT(),  
                     text_color="gray"
                 )
                 desc_label.pack(anchor="w", padx=35, pady=(0, 8))
