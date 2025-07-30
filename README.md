@@ -15,6 +15,7 @@ Ein professionelles Tool zur KI-gestützten Audio-Restauration aus Videos mit de
 - [Installation](#-installation)
 - [Erste Schritte](#-erste-schritte)
 - [Detaillierte Anleitung](#-detaillierte-anleitung)
+- [Voice Enhancement](#-voice-enhancement)
 - [Systemanforderungen](#-systemanforderungen)
 - [Häufige Fragen](#-häufige-fragen)
 - [Fehlerbehebung](#-fehlerbehebung)
@@ -31,8 +32,9 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 
 ### 🔥 Highlights
 
-- 🤖 **Modernste KI-Technologie** (DeepFilterNet3) für beste Ergebnisse
+- 🤖 **Modernste KI-Technologie** (DeepFilterNet3 und SpeechBrain) für beste Ergebnisse
 - 🎛️ **Bewährte Audacity-Algorithmen** als zuverlässige Alternative  
+- 🎙️ **Professionelle Stimmverbesserung** mit klassischen und KI-basierten Methoden
 - 🔊 **Professionelle LUFS-Normalisierung** für einheitliche Lautstärke
 - 📊 **Batch-Verarbeitung** - Bearbeiten Sie dutzende Videos automatisch
 - 🇩🇪 **Deutsche Benutzeroberfläche** - Alles auf Deutsch erklärt
@@ -47,6 +49,24 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 | **DeepFilterNet3** | Modernste KI-Rauschreduzierung | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | Beste Ergebnisse |
 | **Audacity** | Bewährte spektrale Methode | ⭐⭐⭐ | ⭐⭐⭐⭐ | Zuverlässig & schnell |
 | **FFmpeg-Fallback** | Basis-Filterung | ⭐ | ⭐⭐⭐⭐⭐ | Nur als Notfall |
+
+### 🎙️ Voice Enhancement (Stimmverbesserung)
+
+| Methode | Beschreibung | Qualität | Geschwindigkeit | Empfehlung |
+|---------|-------------|----------|----------------|------------|
+| **SpeechBrain AI** | KI-basierte spektrale Maskierung | ⭐⭐⭐⭐ | ⭐⭐⭐ | Modernste Technologie |
+| **Klassisch** | EQ + Kompression + Harmonics | ⭐⭐ | ⭐⭐⭐⭐⭐ | Zuverlässig & konfigurierbar |
+
+#### Klassische Voice Enhancement Parameter:
+- **Clarity Boost**: Hebt 2-4 kHz für bessere Sprachverständlichkeit
+- **Warmth Boost**: Betont 120-250 Hz für volleren, körperlichen Klang
+- **Bandwidth Extension**: Stellt hohe Frequenzen wieder her
+- **Harmonic Restoration**: Repariert Kompressionsartefakte
+- **Compression**: Dynamikbearbeitung für gleichmäßigere Lautstärke
+
+#### SpeechBrain AI Parameter:
+- **Enhancement Strength**: Mischungsverhältnis Original/Enhanced (0.5-2.0)
+- **Audio Normalization**: Automatische Pegelanpassung nach Enhancement
 
 ### 🔊 Lautstärke-Normalisierung
 
@@ -64,9 +84,10 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 
 ## 🖼️ Screenshots
 
-### Hauptfenster
+### Hauptfenster mit Voice Enhancement
 <img width="1101" height="884" alt="image" src="https://github.com/user-attachments/assets/94068edd-eb93-486f-a769-d5a47eb48711" />
 
+*Das Screenshot zeigt die neue Voice Enhancement Sektion mit Methodenauswahl und konfigurierbaren Parametern für beide Ansätze.*
 
 ## 🚀 Installation
 
@@ -105,6 +126,7 @@ python main.py  # ✅ Neu
 
 
 
+
 ## 🎬 Erste Schritte
 
 ### 1. Videos auswählen
@@ -116,17 +138,23 @@ python main.py  # ✅ Neu
 - **DeepFilterNet3 (empfohlen)**: Beste Qualität durch KI
 - **Audacity**: Schnell und zuverlässig, mehr Einstellmöglichkeiten
 
-### 3. Lautstärke einstellen
-- **-23 LUFS**: Für leise Umgebungen (Podcasts, Hörbücher)
-- **-15 LUFS**: Standard für YouTube, Social Media
+### 3. Voice Enhancement aktivieren (optional)
+- Aktivieren Sie **"Stimmverbesserung aktivieren"**
+- Wählen Sie zwischen:
+  - **🎛️ Klassisch**: EQ + Kompression (schnell, konfigurierbar)
+  - **🤖 SpeechBrain AI**: Spektrale Maskierung (beste Qualität)
+
+### 4. Lautstärke einstellen
+- **-30 LUFS**: Für leise Umgebungen (Podcasts, Hörbücher)
+- **-20 LUFS**: Standard
 - **-10 LUFS**: Für laute Umgebungen
 
-### 4. Verarbeitung starten
+### 5. Verarbeitung starten
 - Klicken Sie **"🚀 Verarbeitung starten"**
 - Verfolgen Sie den Fortschritt in Echtzeit
 - Bei Bedarf mit **"⏹️ Abbrechen"** stoppen
 
-### 5. Ergebnisse finden
+### 6. Ergebnisse finden
 - Standardmäßig werden die verbesserten Videos neben den Originalen gespeichert
 - Mit dem Suffix "_restauriert" (z.B. `mein_video_restauriert.mp4`)
 
@@ -178,6 +206,84 @@ python main.py  # ✅ Neu
 - Alle verarbeiteten Videos in einem separaten Ordner
 - Übersichtlicher bei vielen Dateien
 
+## 🎙️ Voice Enhancement
+
+### 🎛️ Klassische Methode
+
+Die klassische Voice Enhancement Methode verwendet bewährte Audio-Engineering-Techniken:
+
+#### Parameter im Detail
+
+**Clarity Boost (0.0-5.0)**
+- Hebt den Frequenzbereich 2-4 kHz an
+- **0-2**: Subtile Verbesserung der Sprachverständlichkeit
+- **2-4**: Standard-Einstellung für die meisten Stimmen
+- **4-5**: Starke Anhebung, kann bei manchen Stimmen zu scharf wirken
+
+**Warmth Boost (0.0-5.0)**
+- Betont den Bereich 120-250 Hz für mehr Körper
+- **0-1**: Leichte Erwärmung
+- **2-3**: Standard für dünne oder nasale Stimmen
+- **3-5**: Starke Bassverstärkung
+
+**Bandwidth Extension (0.0-5.0)**
+- Rekonstruiert hohe Frequenzen (6-12 kHz)
+- **0-1**: Subtile Aufhellung
+- **1-3**: Standard für komprimierte Audio-Quellen
+- **3-5**: Starke Wiederherstellung für stark komprimierte Aufnahmen
+
+**Harmonic Restoration (0.0-5.0)**  
+- Repariert Verzerrungen und Kompressionsartefakte
+- **0-1**: Minimale harmonische Sättigung
+- **1-2**: Ausgewogen für die meisten Anwendungen
+- **2-5**: Starke Restauration für stark beschädigte Aufnahmen
+
+**Compression Ratio (1.0-5.0)**
+- Dynamikbearbeitung für gleichmäßigere Lautstärke
+- **1.0**: Keine Kompression
+- **2.0**: Leichte Kompression (empfohlen)
+- **3.0-4.0**: Standard für Podcast/Broadcast
+- **5.0**: Starke Kompression für sehr ungleichmäßige Aufnahmen
+
+**Compression Threshold (-30.0 bis -10.0 dB)**
+- Pegel ab dem die Kompression einsetzt
+- **-30 dB**: Sehr niedrige Schwelle, komprimiert fast alles
+- **-18 dB**: Standard-Einstellung
+- **-10 dB**: Hohe Schwelle, komprimiert nur laute Passagen
+
+### 🤖 SpeechBrain AI Methode
+
+Die SpeechBrain AI Methode nutzt neuronale Netzwerke für spektrale Maskierung:
+
+#### Parameter im Detail
+
+**Enhancement Strength (0.5-2.0)**
+- Bestimmt das Mischungsverhältnis zwischen Original und Enhanced Audio
+- **0.5**: 50% Original + 50% Enhanced (subtil)
+- **1.0**: 100% Enhanced (Standard)
+- **1.5-2.0**: Verstärkte Enhancement-Effekte
+
+**Audio Normalization (Ein/Aus)**
+- Automatische Pegelanpassung nach dem Enhancement
+- **Ein**: Optimiert die Lautstärke automatisch (empfohlen)
+- **Aus**: Behält die Original-Lautstärke bei
+
+#### Technische Details
+- **Sample Rate**: Arbeitet intern mit 16 kHz, konvertiert automatisch
+- **Latenz**: ~2-3x länger als klassische Methode
+- **Speicherbedarf**: Benötigt zusätzlich ~500 MB RAM für das AI-Modell
+
+### 🆚 Wann welche Methode verwenden?
+
+| Anwendungsfall | Empfohlene Methode | Begründung |
+|---------------|-------------------|------------|
+| **Podcast-Aufnahmen** | SpeechBrain AI | Beste Sprachverständlichkeit |
+| **YouTube-Videos** | Klassisch | Schneller, mehr Kontrolle |
+| **Live-Streaming** | Klassisch | Geringere Latenz |
+| **Professionelle Produktion** | SpeechBrain AI | Höchste Qualität |
+| **Batch-Verarbeitung** | Klassisch | Deutlich schneller |
+| **Alte/beschädigte Aufnahmen** | SpeechBrain AI + Klassisch | Kombinierte Anwendung |
+
 ### ⚡ Batch-Verarbeitung Tipps
 
 1. **Große Mengen aufteilen**
@@ -198,14 +304,19 @@ python main.py  # ✅ Neu
 ### Mindestanforderungen
 - **Betriebssystem**: Windows 10, macOS 10.14, Ubuntu 18.04 (oder neuer)
 - **Python**: Version 3.8 oder höher
-- **RAM**: 4 GB (8 GB empfohlen für DeepFilterNet3)
+- **RAM**: 4 GB (8 GB empfohlen für DeepFilterNet3, 6 GB für SpeechBrain)
 - **Speicher**: 10 GB freier Speicherplatz für temporäre Dateien
 - **Prozessor**: Dual-Core (Quad-Core empfohlen)
 
 ### Empfohlene Konfiguration
-- **RAM**: 16 GB oder mehr für große Video-Dateien
+- **RAM**: 16 GB oder mehr für große Video-Dateien und SpeechBrain AI
 - **SSD**: Für schnellere Verarbeitung
 - **Grafikkarte**: GPU-Beschleunigung wird automatisch genutzt (falls verfügbar)
+
+### SpeechBrain-spezifische Anforderungen
+- **Zusätzlicher RAM**: +2 GB für das AI-Modell
+- **Internet**: Beim ersten Start zum Download des Modells (~500 MB)
+- **PyTorch**: Wird automatisch mit den Dependencies installiert
 
 ### Unterstützte Video-Formate
 
@@ -225,16 +336,49 @@ python main.py  # ✅ Neu
 ### 🤔 Welche Methode soll ich wählen?
 
 **Für die beste Qualität:**
-- Verwenden Sie **DeepFilterNet3** wenn verfügbar
+- Verwenden Sie **DeepFilterNet3** für Rauschreduzierung wenn verfügbar
+- Kombinieren Sie mit **SpeechBrain AI** für Voice Enhancement
 - Moderne KI liefert meist bessere Ergebnisse als traditionelle Methoden
 
 **Für Geschwindigkeit:**
-- **Audacity** ist deutlich schneller
+- **Audacity** ist deutlich schneller für Rauschreduzierung
+- **Klassisches Voice Enhancement** ist 3x schneller als SpeechBrain
 - Besonders bei älteren Computern oder vielen Dateien
 
 **Für maximale Kontrolle:**
-- **Audacity** bietet mehr Einstellungsmöglichkeiten
+- **Audacity** + **Klassisches Voice Enhancement** bieten mehr Einstellungsmöglichkeiten
 - Sie können das Ergebnis feiner abstimmen
+
+### 🎙️ Was ist Voice Enhancement und brauche ich das?
+
+**Voice Enhancement verbessert gezielt die Stimmqualität** durch:
+- Klarere Aussprache (Clarity Boost)
+- Volleren Klang (Warmth Boost)  
+- Wiederherstellung verlorener Frequenzen
+- Gleichmäßigere Lautstärke
+
+**Sie brauchen es wenn:**
+- ✅ Ihre Stimme dünn oder nasal klingt
+- ✅ Das Audio komprimiert oder "flach" wirkt
+- ✅ Sie professionellere Ergebnisse wollen
+- ✅ Alte oder schlecht aufgenommene Videos bearbeiten
+
+**Sie brauchen es nicht wenn:**
+- ❌ Die Stimmqualität bereits sehr gut ist
+- ❌ Sie nur Hintergrundgeräusche entfernen wollen
+- ❌ Geschwindigkeit wichtiger als Qualität ist
+
+### 🆚 SpeechBrain AI vs. Klassisches Voice Enhancement?
+
+| Kriterium | SpeechBrain AI | Klassisch |
+|-----------|---------------|-----------|
+| **Qualität** | ⭐⭐⭐⭐ Beste | ⭐⭐ Sehr gut |
+| **Geschwindigkeit** | ⭐⭐⭐ Langsamer | ⭐⭐⭐⭐⭐ Schnell |
+| **Konfiguration** | ⭐⭐ Wenige Parameter | ⭐⭐⭐⭐⭐ Viele Parameter |
+| **Speicherbedarf** | ⭐⭐ Hoch (~6 GB) | ⭐⭐⭐⭐ Normal (~4 GB) |
+| **CPU-Last** | ⭐⭐ Hoch | ⭐⭐⭐⭐ Niedrig |
+
+**Empfehlung**: Probieren Sie beide aus und vergleichen Sie das Ergebnis bei Ihren Aufnahmen.
 
 ### 🔧 Was bedeuten die verschiedenen LUFS-Werte?
 
@@ -252,13 +396,16 @@ python main.py  # ✅ Neu
 - Hintergrund-Rauschen ist deutlich reduziert
 - Stimme klingt klarer und natürlicher
 - Keine "metallischen" oder "robotischen" Artefakte
+- Bessere Sprachverständlichkeit
+- Vollerer, professionellerer Klang
 
 **Probleme:**
 - Stimme klingt verzerrt oder "unterwasser"
 - Neue, künstliche Geräusche sind entstanden
 - Audio klingt "flach" oder leblos
+- Übertrieben scharfer oder bassiger Klang
 
-→ **Lösung**: Reduzieren Sie die Stärke der Rauschreduzierung
+→ **Lösung**: Reduzieren Sie die Stärke der Parameter oder wechseln Sie die Methode
 
 ### 💾 Warum sind die Ausgabe-Dateien größer?
 
@@ -267,6 +414,7 @@ Das ist normal und hat mehrere Gründe:
 1. **Höhere Audio-Qualität**: 48kHz statt ursprünglich niedrigerer Samplerate
 2. **Unkomprimiertes Audio**: Während der Verarbeitung für beste Qualität
 3. **Codec-Unterschiede**: Die finale MP4-Datei verwendet AAC mit 128kbit/s
+4. **Voice Enhancement**: Zusätzliche Frequenz-Informationen
 
 Die Dateigröße ist meist nur 10-30% größer als das Original.
 
@@ -287,11 +435,22 @@ Die Dateigröße ist meist nur 10-30% größer als das Original.
 **Problem**: Die KI-Bibliothek konnte nicht geladen werden.
 
 **Lösung**:
+
 pip uninstall DeepFilterNet3
 pip install DeepFilterNet3
 
-
 Bei weiterhin Problemen verwenden Sie die **Audacity-Methode** - diese funktioniert immer.
+
+### ❌ "SpeechBrain AI nicht verfügbar"
+
+**Problem**: Die SpeechBrain-Bibliothek oder Abhängigkeiten fehlen.
+
+**Lösung**:
+pip install speechbrain torch torchaudio
+
+Falls das nicht hilft:
+- Verwenden Sie **Klassisches Voice Enhancement** - funktioniert ohne zusätzliche KI-Bibliotheken
+- Prüfen Sie Ihre Python-Version (mindestens 3.8 erforderlich)
 
 ### ❌ "Audio zu kurz für Audacity-Methode"
 
@@ -329,6 +488,14 @@ Bei weiterhin Problemen verwenden Sie die **Audacity-Methode** - diese funktioni
 2. **Speicherplatz**: Ist genug Platz verfügbar?
 3. **Dateiname**: Enthält er ungültige Zeichen?
 4. **Antivirus**: Blockiert es die Erstellung neuer Dateien?
+
+### 🎙️ Voice Enhancement funktioniert nicht
+
+**Häufige Probleme**:
+1. **SpeechBrain-Modell lädt nicht**: Internetverbindung prüfen (beim ersten Start)
+2. **Keine hörbare Verbesserung**: Parameter zu niedrig eingestellt
+3. **Verzerrungen**: Parameter zu hoch, reduzieren Sie die Werte
+4. **Programm stürzt ab**: Zu wenig RAM, verwenden Sie klassische Methode
 
 ## 🎓 Tipps für beste Ergebnisse
 
