@@ -2,7 +2,13 @@
 
 import os
 import sys
+import logging
 from typing import List, Dict, Any, Optional
+
+from utils.logger import log_with_prefix, get_normalized_logger
+
+# Logger konfigurieren
+logger = get_normalized_logger('validators')
 
 def check_dependencies() -> bool:
     """
@@ -25,33 +31,66 @@ def check_dependencies() -> bool:
     for package_name, import_name in required_packages.items():
         try:
             __import__(import_name)
-            print(f"✅ {package_name} verfügbar")
+            msg = f"✅ {package_name} verfügbar"
+
+            log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
         except ImportError:
             missing_deps.append(package_name)
-            print(f"❌ {package_name} nicht verfügbar")
-    
+            msg = f"❌ {package_name} nicht verfügbar"
+
+            log_with_prefix(logger, 'error', 'VALIDATORS', 'check_dependencies', msg)
+
     # FFmpeg prüfen
     if not check_ffmpeg():
         missing_deps.append('FFmpeg')
-        print("❌ FFmpeg nicht verfügbar")
+        msg = "❌ FFmpeg nicht verfügbar"
+
+        log_with_prefix(logger, 'error', 'VALIDATORS', 'check_dependencies', msg)
     else:
-        print("✅ FFmpeg verfügbar")
-    
+        msg = "✅ FFmpeg verfügbar"
+
+        log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
+
     # DeepFilterNet3 prüfen (optional)
     try:
         import df.enhance
-        print("✅ DeepFilterNet3 verfügbar")
+        msg = "✅ DeepFilterNet3 verfügbar"
+
+        log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
     except ImportError:
-        print("⚠️ DeepFilterNet3 nicht verfügbar (optional)")
+        msg = "⚠️ DeepFilterNet3 nicht verfügbar (optional)"
+
+        log_with_prefix(logger, 'warning', 'VALIDATORS', 'check_dependencies', msg)
+
+    # SpeechBrain AI prüfen (optional)
+    try:
+        import speechbrain
+        msg = "✅ SpeechBrain AI verfügbar"
+
+        log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
+    except ImportError:
+        msg = "⚠️ SpeechBrain AI nicht verfügbar (optional)"
+
+        log_with_prefix(logger, 'warning', 'VALIDATORS', 'check_dependencies', msg)
     
     if missing_deps:
-        print(f"\n❌ Fehlende Abhängigkeiten: {', '.join(missing_deps)}")
-        print("Bitte installieren Sie diese mit: pip install -r requirements.txt")
+        msg = f"\n❌ Fehlende Abhängigkeiten: {', '.join(missing_deps)}"
+
+        log_with_prefix(logger, 'error', 'VALIDATORS', 'check_dependencies', msg)
+        
+        msg = "Bitte installieren Sie diese mit: pip install -r requirements.txt"
+
+        log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
+
         if 'FFmpeg' in missing_deps:
-            print("FFmpeg muss separat installiert werden: https://ffmpeg.org/download.html")
+            msg = "FFmpeg muss separat installiert werden: https://ffmpeg.org/download.html"
+
+            log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
         return False
     
-    print("\n✅ Alle notwendigen Abhängigkeiten verfügbar")
+    msg = "\n✅ Alle notwendigen Abhängigkeiten verfügbar"
+
+    log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
     return True
 
 def check_ffmpeg() -> bool:
@@ -68,29 +107,68 @@ def check_ffmpeg() -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError, ImportError):
         return False
 
-def is_video_file(file_path: str) -> bool:
-    """
-    Prüft ob eine Datei ein unterstütztes Videoformat hat
-    
-    Args:
-        file_path: Pfad zur Datei
-        
-    Returns:
-        True wenn es ein unterstütztes Video ist
-    """
-    if not isinstance(file_path, str) or not file_path:
-        return False
-    
-    video_extensions = {
-        '.mp4', '.mov', '.mkv', '.avi', '.m4v', 
-        '.webm', '.flv', '.wmv', '.mpg', '.mpeg'
-    }
+def is_video_file(file_path: str) -> tuple[bool, str]:
+    """Sichere Video-Datei-Validierung mit Magic Bytes Check"""
     
     try:
+        # Basis-Checks
+        if not os.path.exists(file_path):
+            return False, "Datei existiert nicht"
+        
+        if not os.path.isfile(file_path):
+            return False, "Pfad ist keine Datei"
+        
+        # Dateigröße prüfen
+        file_size = os.path.getsize(file_path)
+        if file_size == 0:
+            return False, "Datei ist leer"
+        
+        if file_size > 5 * 1024 * 1024 * 1024:  # 5GB Limit
+            return False, "Datei zu groß (>5GB)"
+        
+        # Extension-Check
+        video_extensions = {'.mp4', '.mov', '.mkv', '.avi', '.m4v', '.webm', '.flv', '.wmv'}
         file_extension = os.path.splitext(file_path)[1].lower()
-        return file_extension in video_extensions
-    except (TypeError, AttributeError):
+        
+        if file_extension not in video_extensions:
+            return False, "Unsupported format"
+        
+        # NEU: Magic Number Check (File Header)
+        if not _verify_video_magic_bytes(file_path):
+            return False, "Datei entspricht nicht dem Format (Magic Bytes)"
+        
+        return True, "OK"
+        
+    except (OSError, PermissionError) as e:
+        return False, f"Dateizugriff fehlgeschlagen: {e}"
+
+def _verify_video_magic_bytes(file_path: str) -> bool:
+    """Prüft Video-File-Headers - NEU HINZUFÜGEN"""
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(12)
+            
+        # MP4/MOV
+        if b'ftyp' in header:
+            return True
+        
+        # AVI
+        if header.startswith(b'RIFF') and b'AVI ' in header:
+            return True
+        
+        # MKV
+        if header.startswith(b'\x1a\x45\xdf\xa3'):
+            return True
+        
+        # WebM
+        if header.startswith(b'\x1a\x45\xdf\xa3'):
+            return True
+            
         return False
+        
+    except:
+        return False
+
 
 def get_supported_video_formats() -> List[str]:
     """Gibt Liste unterstützter Video-Formate zurück"""
@@ -138,6 +216,17 @@ def validate_output_directory(dir_path: Optional[str]) -> tuple[bool, str]:
     """
     if not dir_path:
         return True, ""  # Kein Verzeichnis ist OK (dann neben Original)
+    
+    # NEU: Path Traversal verhindern
+    normalized = os.path.normpath(dir_path)
+    if ".." in normalized:
+        return False, "Path Traversal in Ausgabeverzeichnis erkannt"
+    
+    # NEU: Absolute Pfade außerhalb User-Bereiche verhindern
+    if os.path.isabs(normalized):
+        user_home = os.path.expanduser("~")
+        if not normalized.startswith(user_home):
+            return False, "Ausgabe außerhalb des Benutzerverzeichnisses nicht erlaubt"
     
     if not os.path.exists(dir_path):
         return False, f"Verzeichnis existiert nicht: {dir_path}"
@@ -213,7 +302,7 @@ def validate_lufs_value(lufs: float) -> tuple[bool, str]:
     # Warnungen für unübliche Werte
     if lufs > -10.0:
         return True, f"Warnung: Sehr lauter LUFS-Wert ({lufs:.1f})"
-    elif lufs < -25.0:
+    elif lufs < -30.0:
         return True, f"Warnung: Sehr leiser LUFS-Wert ({lufs:.1f})"
     
     return True, ""
@@ -311,7 +400,7 @@ def get_available_methods() -> Dict[str, Dict[str, Any]]:
     methods = {
         'audacity': {
             'name': 'Audacity Spektral',
-            'description': 'Zuverlässig • Konfigurierbar • Bewährt',
+            'description': 'Zuverlässig • Konfigurierbar',
             'available': True,
             'sample_rate': 22050
         }
@@ -322,7 +411,7 @@ def get_available_methods() -> Dict[str, Dict[str, Any]]:
         import df.enhance
         methods['deepfilternet3'] = {
             'name': 'DeepFilterNet3 (KI)',
-            'description': 'Beste Qualität • 48kHz • Modernste KI',
+            'description': 'Beste QualitätModernste KI',
             'available': True,
             'sample_rate': 48000
         }
