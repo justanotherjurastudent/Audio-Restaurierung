@@ -68,29 +68,66 @@ class FileManager:
         return None
     
     def generate_output_path(self, input_path: str, filename_mode: str, 
-                           custom_suffix: str, output_dir: Optional[str]) -> str:
-        """Generiert den Ausgabe-Pfad für eine verarbeitete Datei"""
-        base, ext = os.path.splitext(input_path)
+                        custom_suffix: str, output_dir: Optional[str]) -> str:
+        """Sichere Ausgabepfad-Generierung"""
+        
+        # Input-Validierung (existiert und ist Datei)
+        if not os.path.isfile(input_path):
+            raise FileOperationError(f"Ungültiger Eingabepfad: {input_path}")
+        safe_input = input_path
+        safe_suffix = self._sanitize_filename_component(custom_suffix)
+        
+        base, ext = os.path.splitext(safe_input)
         base_name = os.path.basename(base)
         
+        # Dateiname generieren
         if filename_mode == "original":
             output_name = f"{base_name}{ext}"
-            # Bei Konflikten Nummer hinzufügen
-            counter = 1
-            while True:
-                if output_dir:
-                    test_path = os.path.join(output_dir, output_name)
-                else:
-                    test_path = os.path.join(os.path.dirname(input_path), output_name)
-                
-                if not os.path.exists(test_path) or test_path == input_path:
-                    break
-                output_name = f"{base_name}_({counter}){ext}"
-                counter += 1
-        else:  # suffix mode
-            output_name = f"{base_name}_{custom_suffix}{ext}"
-        
-        if output_dir:
-            return os.path.join(output_dir, output_name)
         else:
-            return os.path.join(os.path.dirname(input_path), output_name)
+            output_name = f"{base_name}_{safe_suffix}{ext}"
+        
+        # Ausgabepfad sicher bestimmen
+        if output_dir:
+            safe_output_dir = self._validate_output_directory(output_dir)
+            return os.path.join(safe_output_dir, output_name)
+        else:
+            return os.path.join(os.path.dirname(safe_input), output_name)
+
+    def _sanitize_filename_component(self, component: str) -> str:
+        """Bereinigt Dateinamen-Komponenten"""
+        if not component:
+            return "output"
+        
+        # Gefährliche Zeichen entfernen
+        import re
+        safe_component = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', component)
+        
+        # Reservierte Namen vermeiden
+        reserved_names = {'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 
+                        'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 
+                        'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 
+                        'LPT7', 'LPT8', 'LPT9'}
+        
+        if safe_component.upper() in reserved_names:
+            safe_component += "_file"
+        
+        # Länge begrenzen
+        return safe_component[:50]
+
+    def _validate_output_directory(self, output_dir: str) -> str:
+        """Validiert Ausgabe-Verzeichnisse gegen Path Traversal"""
+        normalized = os.path.normpath(output_dir)
+        
+        # Path Traversal verhindern
+        if ".." in normalized:
+            raise ValueError("Path Traversal in Ausgabeverzeichnis erkannt")
+        
+        # Absolute Pfade außerhalb erlaubter Bereiche verhindern
+        if os.path.isabs(normalized):
+            # Prüfe ob in erlaubten Bereichen (z.B. User-Verzeichnis)
+            user_home = os.path.expanduser("~")
+            if not normalized.startswith(user_home):
+                raise ValueError("Ausgabe außerhalb des Benutzerverzeichnisses nicht erlaubt")
+        
+        return normalized
+
