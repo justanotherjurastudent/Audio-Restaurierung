@@ -11,43 +11,42 @@ from typing import Optional
 import tempfile
 import numpy as np
 import logging
+import hashlib
+import json
 
 # NEU: Import für log_with_prefix (behebt 'not defined'-Fehler)
-from utils.logger import log_with_prefix
+from utils.logger import log_with_prefix, get_normalized_logger
 from utils.config import Config  # NEU: Import für Konfiguration
-
 from audio.ffmpeg_utils import FFmpegUtils
 
 # Logger konfigurieren
-logger = logging.getLogger(__name__)
+logger = get_normalized_logger('AudioPreview')
 
-# Playsound/Winsound-Setup (vereinfacht, ohne Subprocess)
-PLAYSOUND_AVAILABLE = False
-WINSOUND_AVAILABLE = False
+# Geändert: Nur pygame für Audio-Wiedergabe verwenden
+PYGAME_AVAILABLE = False
 
 try:
-    from playsound import playsound
-    PLAYSOUND_AVAILABLE = True
-    logger.info("Playsound erfolgreich geladen")
+    import pygame
+    pygame.mixer.init()
+    PYGAME_AVAILABLE = True
+    logger.info("Pygame erfolgreich geladen ✅")
 except ImportError:
-    pass
-
-if getattr(sys, 'frozen', False) and os.name == 'nt':
-    try:
-        import winsound
-        WINSOUND_AVAILABLE = True
-        logger.info("Winsound erfolgreich geladen (EXE-Modus)")
-    except ImportError:
-        pass
+    logger.error("Pygame konnte nicht geladen werden ❌")
 
 class AudioPreviewPlayer:
     """Vereinfachter Audio-Player mit korrektem Progress-Update"""
 
     def __init__(self):
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'AudioPreviewPlayer wird initialisiert (vereinfacht)')
-        self.is_exe = getattr(sys, 'frozen', False)
-        self.use_winsound = self.is_exe and WINSOUND_AVAILABLE and os.name == 'nt'
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'AudioPreviewPlayer wird initialisiert (vereinfacht) ✅')
+
+        # Geändert: Nur pygame als Player-Typ
+        if PYGAME_AVAILABLE:
+            self.player_type = 'pygame'
+        else:
+            self.player_type = None
+            log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Keine Audio-Wiedergabe-Methode verfügbar ❌')
+
         self.is_playing = False
         self.is_paused = False  # NEU: Pause-Status
         self.current_file = None
@@ -58,41 +57,54 @@ class AudioPreviewPlayer:
         self.start_time = None
         self.pause_time = None  # NEU: Pause-Zeitpunkt
         self._player_lock = threading.Lock()
+        # Geändert: Für pygame: Sound-Objekt
+        self.pygame_sound = None
+        self.is_unloaded = False
 
     def is_available(self) -> bool:
         herkunft = 'audio_preview.py'
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Prüfe Audio-Wiedergabe-Verfügbarkeit')
-        return PLAYSOUND_AVAILABLE or self.use_winsound
+        return self.player_type is not None
 
     def load(self, wav_path: str) -> bool:
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Datei wird geladen: %s', os.path.basename(wav_path))
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Datei wird geladen: %s ✅', os.path.basename(wav_path))
         if not self.is_available():
-            log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Keine Audio-Wiedergabe-Methode verfügbar')
+            log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Keine Audio-Wiedergabe-Methode verfügbar ❌')
             return False
+
         self.stop()
         self.current_file = wav_path
         try:
             import soundfile as sf
             info = sf.info(wav_path)
             self.duration = min(30, info.duration)
-        except:
+            # Geändert: Für pygame: Lade Sound zur Duration-Prüfung
+            if self.player_type == 'pygame':
+                self.pygame_sound = pygame.mixer.Sound(wav_path)
+                self.duration = min(30, self.pygame_sound.get_length())
+        except Exception as e:
+            log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Duration-Berechnung fehlgeschlagen ⚠️: %s', str(e))
             file_size = os.path.getsize(wav_path)
             self.duration = min(30, file_size / (22050 * 2))
         return True
 
     def play(self) -> bool:
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird gestartet')
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird gestartet ✅')
         if not self.current_file:
             return False
+
         with self._player_lock:
             if self.is_playing and not self.is_paused:
                 return False
+
             # Resume von Pause oder neuer Start
             if self.is_paused:
-                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Resume von Pause')
+                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Resume von Pause ✅')
                 self.is_paused = False
+                if self.player_type == 'pygame':
+                    pygame.mixer.music.unpause()
                 # Adjust start_time für korrekte Position
                 if self.pause_time and self.start_time:
                     pause_duration = self.pause_time - self.start_time
@@ -102,67 +114,86 @@ class AudioPreviewPlayer:
             else:
                 # Neuer Start
                 self.stop()
-                def play_worker():
-                    try:
-                        log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Play-Worker Thread gestartet')
-                        if self.use_winsound:
-                            winsound.PlaySound(self.current_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
-                            # Warte auf Ende oder Stop-Signal
-                            elapsed = 0
-                            while elapsed < self.duration and not self.should_stop.is_set():
-                                time.sleep(0.1)
-                                elapsed += 0.1
-                        else:
-                            playsound(self.current_file, block=True)
-                        if not self.should_stop.is_set():
-                            self.is_playing = False
-                            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Wiedergabe natürlich beendet')
-                    except Exception as e:
-                        log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Wiedergabe fehlgeschlagen: %s', str(e))
+
+            def play_worker():
+                try:
+                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Play-Worker Thread gestartet ✅')
+                    if self.player_type == 'pygame':
+                        pygame.mixer.music.load(self.current_file)
+                        pygame.mixer.music.play()
+                        elapsed = 0
+                        while elapsed < self.duration and not self.should_stop.is_set():
+                            time.sleep(0.1)
+                            elapsed += 0.1
+
+                    if not self.should_stop.is_set():
                         self.is_playing = False
+                        log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Wiedergabe natürlich beendet ✅')
+                except Exception as e:
+                    log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Wiedergabe fehlgeschlagen ❌: %s', str(e))
+                    self.is_playing = False
+
                 self.should_stop.clear()
-                self.play_thread = threading.Thread(target=play_worker, daemon=True)
-                self.play_thread.start()
-                self.is_playing = True
-                self.is_paused = False
-                self.start_time = time.time()
-                self.pause_time = None
-                return True
+
+            self.play_thread = threading.Thread(target=play_worker, daemon=True)
+            self.play_thread.start()
+            self.is_playing = True
+            self.is_paused = False
+            self.start_time = time.time()
+            self.pause_time = None
+            return True
 
     def pause(self):
         """Echte Pause-Funktionalität"""
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird pausiert')
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird pausiert ✅')
         if self.is_playing and not self.is_paused:
             self.is_paused = True
             self.pause_time = time.time()
+            # Geändert: Bibliothek-spezifische Pause
+            if self.player_type == 'pygame':
+                pygame.mixer.music.pause()
             # Position zum Pause-Zeitpunkt speichern
             if self.start_time:
                 self.position = self.pause_time - self.start_time
-            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Audio pausiert bei Position: %.2f s', self.position)
+            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Audio pausiert bei Position: %.2f s ✅', self.position)
 
     def stop(self):
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird gestoppt')
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio-Wiedergabe wird gestoppt ✅')
         self.should_stop.set()
-        if self.use_winsound:
+        
+        # Geändert: Bibliothek-spezifischer Stop und explizite Freigabe
+        if self.player_type == 'pygame':
+            pygame.mixer.music.stop()
             try:
-                winsound.PlaySound(None, 0)
-            except:
-                pass
+                pygame.mixer.music.unload()  # Neu: Explizit die geladene Musik freigeben
+                self.is_unloaded = True
+                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Pygame Musik erfolgreich freigegeben ✅')
+                time.sleep(0.1)  # Neu: Kurze Verzögerung für Windows-Dateilocks
+            except Exception as e:
+                log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Pygame unload fehlgeschlagen ⚠️: %s', str(e))
+                self.is_unloaded = False
+        
         if self.play_thread and self.play_thread.is_alive():
-            self.play_thread.join(timeout=1.0)
+            self.play_thread.join()  # Geändert: Voller join() ohne Timeout für sicheres Beenden
+        
         self.is_playing = False
         self.is_paused = False
         self.position = 0
         self.start_time = None
         self.pause_time = None
+        self.pygame_sound = None  # Geändert: Freigabe
 
     def get_status(self) -> dict:
         """Korrigierte Status-Berechnung"""
         if self.is_playing and not self.is_paused and self.start_time:
             # Laufende Wiedergabe
-            self.position = min(self.duration, time.time() - self.start_time)
+            # Geändert: Verwende bibliothek-spezifische Position
+            if self.player_type == 'pygame' and pygame.mixer.music.get_busy():
+                self.position = min(self.duration, pygame.mixer.music.get_pos() / 1000.0)
+            else:
+                self.position = min(self.duration, time.time() - self.start_time)
         elif self.is_paused and self.pause_time and self.start_time:
             # Pausiert - Position eingefroren
             self.position = min(self.duration, self.pause_time - self.start_time)
@@ -174,7 +205,25 @@ class AudioPreviewPlayer:
         }
 
     def cleanup(self):
-        self.stop()
+        herkunft = 'audio_preview.py'
+        self.stop()  # Bestehend: Ruft stop() auf, was nun unload() enthält
+        
+        # Geändert: Zusätzliche Prüfung und Logging für Freigabe
+        if self.player_type == 'pygame' and not self.is_unloaded:
+            try:
+                pygame.mixer.music.unload()  # Neu: Fallback-Freigabe, falls stop() es verpasst hat
+                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Fallback: Pygame Musik freigegeben ✅')
+                time.sleep(0.1)
+            except Exception as e:
+                log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Fallback-unload fehlgeschlagen ⚠️: %s', str(e))
+        
+        # Neu: Mixer sauber beenden (sichere Abschaltung)
+        try:
+            pygame.mixer.quit()
+            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Pygame Mixer erfolgreich beendet ✅')
+        except Exception as e:
+            log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Pygame Mixer-Beendung fehlgeschlagen ⚠️: %s', str(e))
+
 
 class AudioPreviewWidget(ctk.CTkFrame):
     """Audio-Vorschau-Widget mit Verarbeitung"""
@@ -187,6 +236,8 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self.current_video = None
         self.temp_preview_file = None
         self.processed_preview_file = None
+        self.temp_processed_files = []
+        self.processed_previews = {}
         self.update_thread = None
         self.should_update = False
         self.is_processing = False
@@ -259,6 +310,20 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self.status_label.configure(text="")
         # Verarbeitete Datei zurücksetzen
         self.processed_preview_file = None
+        self.used_methods = None
+        if video_path in self.processed_previews:
+            processed_file, used_method, saved_hash = self.processed_previews[video_path]
+            if os.path.exists(processed_file):
+                self.processed_preview_file = processed_file
+                self.used_methods = used_method
+                self.status_label.configure(text=f"✅ Verarbeitet mit {used_method}")  # Geändert: Immer setzen, unabhängig von Hash
+                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Bestehende verarbeitete Preview geladen: %s (Methode: %s)', os.path.basename(processed_file), used_method)
+                # Lade direkt in Player
+                if self.player.load(processed_file):
+                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Preview in Player geladen')
+            else:
+                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Bestehende Preview nicht gefunden (gelöscht?) - setze zurück')
+                del self.processed_previews[video_path]
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Vorherige verarbeitete Vorschau zurückgesetzt')
         # In separatem Thread laden
         threading.Thread(target=self._load_video_async,
@@ -297,7 +362,15 @@ class AudioPreviewWidget(ctk.CTkFrame):
         filename = os.path.basename(self.current_video) if self.current_video else "Unbekannt"
         log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Video-Vorschau erfolgreich geladen: %s', filename)
         self.info_label.configure(text=f"Bereit: {filename}")
-        self.status_label.configure(text="Klicke 🔄 für Verarbeitung oder ▶️ für Original")
+            
+        # Geändert: Bedingter Status-Set basierend auf verarbeiteter Version
+        if self.processed_preview_file and self.used_methods:
+            self.status_label.configure(text=f"✅ Verarbeitet mit {self.used_methods}")
+            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Status auf verarbeitete Version gesetzt (Methode: %s)', self.used_methods)
+        else:
+            self.status_label.configure(text="Klicke 🔄 für Verarbeitung oder ▶️ für Original")
+            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Status auf Original gesetzt')
+        
         self._set_controls_enabled(True)
 
     def _on_load_error(self, error_msg: str):
@@ -336,6 +409,9 @@ class AudioPreviewWidget(ctk.CTkFrame):
             if noise_method == "deepfilternet3":
                 target_sample_rate = 48000
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'DeepFilterNet3 erkannt - verwende 48kHz Vorschau')
+            elif noise_method == "voicefixer":  # Geändert: VoiceFixer-spezifische Konfiguration
+                target_sample_rate = 44100  # VoiceFixer funktioniert gut mit 44.1kHz
+                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'VoiceFixer erkannt - verwende 44.1kHz Vorschau')
             else:
                 target_sample_rate = 22050
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Andere Methode erkannt - verwende 22kHz Vorschau für Performance')
@@ -345,6 +421,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
             processed_name = f"processed_preview_{int(time.time())}.wav"
             self.processed_preview_file = os.path.join(temp_dir, processed_name)
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Vorschau-Datei: %s', os.path.basename(self.processed_preview_file))
+            self.temp_processed_files.append(self.processed_preview_file)
             # Mini-Processor erstellen
             processor = VideoProcessor()
             with tempfile.TemporaryDirectory(prefix="preview_") as temp_processing_dir:
@@ -373,20 +450,58 @@ class AudioPreviewWidget(ctk.CTkFrame):
                     voice_method = config.get('voice_method', 'classic')
                     log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Voice Enhancement Methode: %s', voice_method)
                     if voice_method == "speechbrain":
-                        # SpeechBrain mit expliziter Sample-Rate-Kontrolle
-                        from audio.speechbrain_voice_enhancer import SpeechBrainVoiceEnhancer
-                        enhancer = SpeechBrainVoiceEnhancer()
-                        if enhancer.is_available():
-                            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende SpeechBrain Voice Enhancement')
-                            voice_settings = config['voice_settings'].copy()
-                            voice_settings['original_sample_rate'] = target_sample_rate
-                            voice_settings['target_sample_rate'] = target_sample_rate
-                            enhancer.process(wav_processed, wav_enhanced, voice_settings)
-                            used_method += " + SpeechBrain"
-                            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Gelungen (Methode: SpeechBrain AI)')  # NEU: INFO für Erfolg und Herkunft
-                            if Config.get_debug_mode():  # NEU: DEBUG nur bei aktiviertem Modus
-                                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Input: %s, Output: %s', wav_processed, wav_enhanced)
-                        else:
+                        try:
+                            # SpeechBrain Voice Enhancement (AI)
+                            from audio.speechbrain_voice_enhancer import SpeechBrainVoiceEnhancer
+                            enhancer = SpeechBrainVoiceEnhancer()
+                            if enhancer.is_available():
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende SpeechBrain Voice Enhancement')
+                                voice_settings = config['voice_settings'].copy()
+                                voice_settings['original_sample_rate'] = target_sample_rate
+                                voice_settings['target_sample_rate'] = target_sample_rate
+                                enhancer.process(wav_processed, wav_enhanced, voice_settings)
+                                used_method += " + SpeechBrain"
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Gelungen (Methode: SpeechBrain AI)')
+                                if Config.get_debug_mode():
+                                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Input: %s, Output: %s', wav_processed, wav_enhanced)
+                            else:
+                                log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
+                                from audio.voice_enhancer import VoiceAudioEnhancer
+                                enhancer = VoiceAudioEnhancer()
+                                enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
+                                used_method += " + Voice-Klassisch"
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
+                        except ImportError:
+                            log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
+                            from audio.voice_enhancer import VoiceAudioEnhancer
+                            enhancer = VoiceAudioEnhancer()
+                            enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
+                            used_method += " + Voice-Klassisch"
+                            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
+
+                    elif voice_method == "voicefixer":
+                        # VoiceFixer (Multi-task AI)
+                        try:
+                            from audio.voicefixer_enhancer import VoiceFixerEnhancer
+                            enhancer = VoiceFixerEnhancer()
+                            if enhancer.is_available():
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende VoiceFixer Voice Enhancement')
+                                voice_settings = config['voice_settings'].copy()
+                                voice_settings['original_sample_rate'] = target_sample_rate
+                                voice_settings['target_sample_rate'] = target_sample_rate
+                                enhancer.process(wav_processed, wav_enhanced, voice_settings)
+                                used_method += " + VoiceFixer"
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Gelungen (Methode: VoiceFixer AI)')
+                                if Config.get_debug_mode():
+                                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Input: %s, Output: %s', wav_processed, wav_enhanced)
+                            else:
+                                log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
+                                from audio.voice_enhancer import VoiceAudioEnhancer
+                                enhancer = VoiceAudioEnhancer()
+                                enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
+                                used_method += " + Voice-Klassisch"
+                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
+                        except ImportError:
                             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
                             from audio.voice_enhancer import VoiceAudioEnhancer
                             enhancer = VoiceAudioEnhancer()
@@ -407,11 +522,18 @@ class AudioPreviewWidget(ctk.CTkFrame):
                     log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Voice Enhancement deaktiviert')
                     # Keine Voice Enhancement
                     self._prepare_final_preview(wav_processed, self.processed_preview_file, target_sample_rate)
-            # UI im Main Thread aktualisieren
-            self.after(0, self._on_process_success, used_method)
-            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Abgeschlossen mit Methode %s', used_method)  # NEU: INFO für Abschluss und Herkunft
-            if Config.get_debug_mode():  # NEU: DEBUG nur bei aktiviertem Modus
-                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Sample-Rate: %d Hz', target_sample_rate)
+                # UI im Main Thread aktualisieren
+                self.after(0, self._on_process_success, used_method)
+                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Abgeschlossen mit Methode %s', used_method)
+                 # Geändert: Nach Erfolg, speichere in Dict und Liste
+                config_hash = self._get_config_hash(config)
+                if self.current_video in self.processed_previews:
+                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Überschreibe bestehende Verarbeitung für %s (neue Config)', os.path.basename(self.current_video))
+                self.processed_previews[self.current_video] = (self.processed_preview_file, used_method, config_hash)
+                self.temp_processed_files.append(self.processed_preview_file)  # Bestehend: Tracke für Löschung
+                log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Preview in Dict gespeichert (Hash: %s)', config_hash)
+                if Config.get_debug_mode():
+                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Sample-Rate: %d Hz', target_sample_rate)
         except Exception as e:
             log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Asynchrone Vorschau-Verarbeitung fehlgeschlagen: %s', str(e))
             self.after(0, self._on_process_error, str(e))
@@ -428,7 +550,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Aktuelle Sample-Rate: %d Hz', current_rate)
             if current_rate == target_rate:
                 # Bereits korrekt - einfach kopieren
-                import shutil
+                
                 shutil.copy2(input_path, output_path)
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Audio bereits bei %d Hz - kopiert', target_rate)
             else:
@@ -451,7 +573,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Sample-Rate-Konvertierung fehlgeschlagen: %s', str(e))
             log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende Fallback: Kopiere Original-Datei')
             # Fallback: Datei kopieren
-            import shutil
+            
             shutil.copy2(input_path, output_path)
 
     def _prepare_final_preview(self, input_path: str, output_path: str, current_rate: int):
@@ -460,7 +582,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Bereite finale Vorschau für Wiedergabe vor')
         try:
             # Für die Wiedergabe: Konvertiere zu einer Standard-Rate falls nötig
-            # playsound funktioniert am besten mit Standard-Raten
+            # pygame funktioniert am besten mit Standard-Raten
             playback_rate = 44100 if current_rate > 32000 else 22050
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Optimale Wiedergabe-Rate bestimmt: %d Hz', playback_rate)
             if current_rate != playback_rate:
@@ -480,7 +602,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Für Wiedergabe konvertiert: %d Hz → %d Hz', current_rate, playback_rate)
             else:
                 # Bereits optimale Rate
-                import shutil
+                
                 shutil.copy2(input_path, output_path)
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Wiedergabe-Rate bereits optimal: %d Hz', current_rate)
             # Debug-Info für finale Datei
@@ -489,7 +611,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Playback-Vorbereitung fehlgeschlagen: %s', str(e))
             log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende Fallback: Kopiere Eingabe-Datei')
             # Fallback: Original verwenden
-            import shutil
+            
             shutil.copy2(input_path, output_path)
 
     def _on_process_success(self, used_method: str):
@@ -500,12 +622,17 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self.used_methods = used_method
         self.status_label.configure(text=f"✅ Verarbeitet mit {used_method}")
         self._set_controls_enabled(True)
+        
+        # Geändert: Logging erweitern für Klarheit bei Neuverarbeiten
+        if self.current_video in self.processed_previews:
+            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Updated verarbeitete Preview für %s mit neuer Methode: %s', os.path.basename(self.current_video), used_method)
+        
         # Verarbeitete Datei in Player laden
         if self.player.load(self.processed_preview_file):
             log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitete Vorschau in Player geladen')
-            self._start_progress_update()
         else:
             log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Verarbeitete Vorschau konnte nicht in Player geladen werden')
+
 
     def _on_process_error(self, error_msg: str):
         """Verarbeitungsfehler"""
@@ -562,7 +689,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
                 # Progress-Updates garantiert starten
                 self._start_progress_update()
                 if file_type == "verarbeitet" and self.used_methods:
-                    self.status_label.configure(text=f"🎵 Spielt: {self.used_methods}")
+                    self.status_label.configure(text=f"🎵 Spielt mit Verbesserung: {self.used_methods}")
                 else:
                     self.status_label.configure(text="🎵 Spielt: Original")
             else:
@@ -572,17 +699,17 @@ class AudioPreviewWidget(ctk.CTkFrame):
         """Wiedergabe stoppen - mit korrigiertem Progress-Reset"""
         herkunft = 'audio_preview.py'
         log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Stoppe Wiedergabe')
-        # **FIX: Progress-Updates explizit stoppen**
+        # FIX: Progress-Updates explizit stoppen
         self.should_update = False
         # Player stoppen
         self.player.stop()
-        # **FIX: UI sofort zurücksetzen**
+        # FIX: UI sofort zurücksetzen
         self.play_pause_btn.configure(text="▶️")
         self.progress.set(0)
         self.time_label.configure(text="00:00/00:00")
         # Zeige Methode wenn verarbeitete Version verfügbar
         if self.used_methods:
-            self.status_label.configure(text=f"⏹️ Gestoppt: {self.used_methods}")
+            self.status_label.configure(text=f"⏹️ Gestoppt mit Verbesserung: {self.used_methods}")
         else:
             self.status_label.configure(text="⏹️ Gestoppt")
 
@@ -605,12 +732,12 @@ class AudioPreviewWidget(ctk.CTkFrame):
         """Startet Fortschritts-Updates - robuste Version"""
         herkunft = 'audio_preview.py'
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Starte Fortschritts-Updates')
-        # **FIX: Vorherige Updates explizit stoppen**
+        # FIX: Vorherige Updates explizit stoppen
         self.should_update = False
         # Kurz warten damit vorheriger Thread beendet wird
         if self.update_thread and self.update_thread.is_alive():
             self.update_thread.join(timeout=0.2)
-        # **FIX: Frischen Thread starten**
+        # FIX: Frischen Thread starten
         self.should_update = True
         self.update_thread = threading.Thread(target=self._update_progress_loop, daemon=True)
         self.update_thread.start()
@@ -620,16 +747,17 @@ class AudioPreviewWidget(ctk.CTkFrame):
         """Update-Loop für Fortschritt - verbesserte Version"""
         herkunft = 'audio_preview.py'
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Fortschritts-Update-Loop gestartet')
+        time.sleep(0.2)  # Kurze Pause vor dem Start
         while self.should_update:
             try:
-                # **FIX: Prüfe ob Player noch existiert**
+                # FIX: Prüfe ob Player noch existiert
                 if not hasattr(self, 'player') or not self.player:
                     log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Player nicht mehr verfügbar - beende Update-Loop')
                     break
                 status = self.player.get_status()
-                # **FIX: UI-Update garantiert im Main Thread**
+                # FIX: UI-Update garantiert im Main Thread
                 self.after(0, self._update_progress_ui, status)
-                # **FIX: Prüfe ob Wiedergabe natürlich beendet wurde**
+                # FIX: Prüfe ob Wiedergabe natürlich beendet wurde
                 if not status["playing"] and hasattr(self, 'player') and self.player.is_playing:
                     log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Wiedergabe natürlich beendet - triggere Stop')
                     self.after(0, self._stop)
@@ -644,10 +772,10 @@ class AudioPreviewWidget(ctk.CTkFrame):
         """Aktualisiert UI mit Status - robuste Version"""
         herkunft = 'audio_preview.py'
         try:
-            # **FIX: Nur aktualisieren wenn wir noch Updates wollen**
+            # FIX: Nur aktualisieren wenn wir noch Updates wollen
             if not self.should_update:
                 return
-            # **FIX: Prüfe ob Komponenten noch existieren**
+            # FIX: Prüfe ob Komponenten noch existieren
             if not hasattr(self, 'progress') or not hasattr(self, 'time_label'):
                 return
             # Fortschritt aktualisieren
@@ -683,18 +811,27 @@ class AudioPreviewWidget(ctk.CTkFrame):
         except Exception as e:
             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Player-Cleanup-Fehler ignoriert: %s', str(e))
         # Temporäre Dateien löschen
-        temp_files = [self.temp_preview_file, self.processed_preview_file]
+        all_processed = [data[0] for data in self.processed_previews.values() if data[0]]  # Alle processed_files
+        temp_files = [self.temp_preview_file] + self.temp_processed_files + all_processed  # Kombiniere
+        # Entferne Duplikate für Sicherheit
+        temp_files = list(set(temp_files))
         deleted_count = 0
         for temp_file in temp_files:
             if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                    deleted_count += 1
-                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Temporäre Datei gelöscht: %s', os.path.basename(temp_file))
-                except Exception as e:
-                    log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Konnte temporäre Datei nicht löschen: %s', str(e))
+                for attempt in range(3):  # Bestehend: Bis zu 3 Versuche
+                    try:
+                        os.remove(temp_file)
+                        deleted_count += 1
+                        log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Temporäre Datei gelöscht: %s (Versuch %d) ✅', os.path.basename(temp_file), attempt + 1)
+                        break
+                    except Exception as e:
+                        log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Löschversuch %d fehlgeschlagen ⚠️: %s', attempt + 1, str(e))
+                        time.sleep(0.2)  # Bestehend: Wartezeit
         if deleted_count > 0:
-            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Temporäre Dateien aufgeräumt: %d Dateien', deleted_count)
+            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Temporäre Dateien aufgeräumt: %d Dateien ✅', deleted_count)
+        
+        # Neu: Dict leeren
+        self.processed_previews = {}
         # Parent destroy aufrufen
         try:
             super().destroy()
@@ -717,3 +854,11 @@ class AudioPreviewWidget(ctk.CTkFrame):
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Dateigröße: %.1f KB', file_size)
         except Exception as e:
             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Debug-Info fehlgeschlagen für %s: %s', description, str(e))
+            
+    # Neu: Hilfsfunktion für Config-Hash (füge ans Ende der Klasse hinzu)
+    def _get_config_hash(self, config: dict) -> str:
+        """Berechnet reproduzierbaren Hash der Config für Vergleich"""
+        import hashlib
+        import json
+        config_str = json.dumps(config, sort_keys=True)  # Sortiert für Konsistenz
+        return hashlib.md5(config_str.encode('utf-8')).hexdigest()
