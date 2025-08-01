@@ -270,23 +270,31 @@ class AudioPreviewWidget(ctk.CTkFrame):
         # Button-Container
         button_frame = ctk.CTkFrame(self)
         button_frame.pack(fill="x", padx=10, pady=5)
+        
         # Play/Pause Button (kombiniert)
         self.play_pause_btn = ctk.CTkButton(
-            button_frame, text="▶️", width=50, height=35,
-            command=self._toggle_play_pause
+            button_frame, text="▶️", width=50, height=35,  # Geändert: Höhe auf 35 für bessere vertikale Zentrierung
+            command=self._toggle_play_pause,
+            font=ctk.CTkFont(size=16),  # Bestehend: Größere Font
+            anchor="center"  # Geändert: Explizite Zentrierung (horizontal/vertikal)
         )
         self.play_pause_btn.pack(side="left", padx=5)
+        
         # Stop Button
         self.stop_btn = ctk.CTkButton(
-            button_frame, text="⏹️", width=50, height=35,
-            command=self._stop
+            button_frame, text="⏹️", width=50, height=35,  # Geändert: Höhe auf 35
+            command=self._stop,
+            font=ctk.CTkFont(size=15),
+            anchor="center"  # Geändert: Zentrierung
         )
         self.stop_btn.pack(side="left", padx=5)
+        
         # Process Button
         self.process_btn = ctk.CTkButton(
-            button_frame, text="🔄", width=50, height=35,
+            button_frame, text="🔄", width=50, height=35,  # Geändert: Höhe auf 35
             command=self._process_preview,
-            font=ctk.CTkFont(size=12)
+            font=ctk.CTkFont(size=18),  # Geändert: Größere Font (vorher 12)
+            anchor="center"  # Geändert: Zentrierung
         )
         self.process_btn.pack(side="left", padx=5)
         # Zeit-Anzeige
