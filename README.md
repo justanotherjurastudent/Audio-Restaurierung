@@ -1,6 +1,6 @@
 # 🎵 Audio-Restaurationstool v1.0.0
 
-Ein professionelles Tool zur KI-gestützten Audio-Restauration aus Videos mit deutscher Benutzeroberfläche.
+Ein Tool zur KI-gestützten Audio-Restauration von Audio- und Videodateien mit deutscher Benutzeroberfläche.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
@@ -23,7 +23,7 @@ Ein professionelles Tool zur KI-gestützten Audio-Restauration aus Videos mit de
 
 ## 🎯 Überblick
 
-Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, das die Tonqualität von Videos durch moderne KI-Algorithmen und bewährte Audacity-Techniken verbessert. Es eignet sich perfekt für:
+Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, das die Tonqualität von Audio- und Videodateien durch moderne KI-Algorithmen und bewährte Audacity-Techniken verbessert. Audio aus Videos wird durch die verbesserte Audiospur ersetzt, ohne das ganze Video neu zu kodieren. Dadurch kann effizient die Tonqualität von Videos auch im Batch-Prozess verarbeitet werden. Es eignet sich perfekt für:
 
 - **Content Creator** die ihre Videos professioneller klingen lassen möchten
 - **Podcaster** zur Verbesserung der Aufnahmequalität  
@@ -32,7 +32,7 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 
 ### 🔥 Highlights
 
-- 🤖 **Modernste KI-Technologie** (DeepFilterNet3 und SpeechBrain) für beste Ergebnisse
+- 🤖 **Moderne KI-Technologie** (DeepFilterNet3 und SpeechBrain) für beste Ergebnisse
 - 🎛️ **Bewährte Audacity-Algorithmen** als zuverlässige Alternative  
 - 🎙️ **Professionelle Stimmverbesserung** mit klassischen und KI-basierten Methoden
 - 🔊 **Professionelle LUFS-Normalisierung** für einheitliche Lautstärke
