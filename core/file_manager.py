@@ -130,4 +130,3 @@ class FileManager:
                 raise ValueError("Ausgabe außerhalb des Benutzerverzeichnisses nicht erlaubt")
         
         return normalized
-

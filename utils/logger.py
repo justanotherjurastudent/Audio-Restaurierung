@@ -232,7 +232,7 @@ def get_normalized_logger(name: str = None) -> logging.Logger:
         return logging.getLogger("AudioRestorer")
     
     # Module-spezifische Logger als Child von AudioRestorer
-    if name in ['audacity', 'deepfilter', 'ffmpeg_utils', 'speechbrain', 'voice_enhancer', 'processors', 'workers']:
+    if name in ['audacity', 'deepfilter', 'ffmpeg_utils', 'speechbrain', 'voice_enhancer', 'processors', 'workers', 'voicefixer_enhancer', 'audio_preview', 'file_manager', 'validators']:
         return logging.getLogger(f"AudioRestorer.{name}")
     
     return logging.getLogger("AudioRestorer")

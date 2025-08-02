@@ -148,18 +148,18 @@ class FFmpegUtils:
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Sample-Rate erfolgreich validiert: %d Hz', sample_rate)
         return sample_rate
 
-    def extract_audio(self, video_path: str, wav_path: str, sample_rate: int = 48000) -> None:
+    def extract_audio(self, media_path: str, wav_path: str, sample_rate: int = 48000) -> None:
         """Extrahiert Audio aus Video als Mono-WAV mit verbesserter Sicherheit"""
         herkunft = 'ffmpeg_utils.py'
         log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio-Extraktion wird gestartet')
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video-Eingabe: %s', os.path.basename(video_path))
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video-Eingabe: %s', os.path.basename(media_path))
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Audio-Ausgabe: %s', os.path.basename(wav_path))
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Ziel-Sample-Rate: %d Hz', sample_rate)
         if not self.is_available():
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'FFmpeg ist nicht verfügbar für Audio-Extraktion')
             raise FFmpegNotFoundError("FFmpeg ist nicht verfügbar")
         # Sichere Validierung
-        safe_video_path = self._sanitize_file_path(video_path)
+        safe_media_path = self._sanitize_file_path(media_path)
         safe_sample_rate = self._validate_sample_rate(sample_rate)
         # Ausgabepfad normalisieren (aber nicht validieren, da er noch nicht existiert)
         safe_wav_path = os.path.normpath(wav_path)
@@ -169,7 +169,7 @@ class FFmpegUtils:
             "-hide_banner",  # Reduziert Info-Leakage
             "-loglevel", "error",  # Nur Fehler ausgeben
             "-y",
-            "-i", safe_video_path,
+            "-i", safe_media_path,
             "-vn",  # Kein Video
             "-acodec", "pcm_s16le",
             "-ar", str(safe_sample_rate),
@@ -207,6 +207,81 @@ class FFmpegUtils:
         except Exception as e:
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Unerwarteter Fehler bei Audio-Extraktion: %s', str(e))
             raise AudioProcessingError(f"FFmpeg Audio-Extraktion: {str(e)}")
+        
+    def convert_to_wav(self, input_path: str, wav_path: str, sample_rate: int = 48000) -> None:
+        """Konvertiert eine Audio-Datei zu Mono-WAV"""
+        herkunft = 'ffmpeg_utils.py'
+        log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio-Konvertierung zu WAV gestartet')
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Input: %s', os.path.basename(input_path))
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Output: %s', os.path.basename(wav_path))
+
+        if not self.is_available():
+            raise FFmpegNotFoundError("FFmpeg ist nicht verfügbar")
+
+        safe_input = self._sanitize_file_path(input_path)
+        safe_sample_rate = self._validate_sample_rate(sample_rate)
+        safe_wav_path = os.path.normpath(wav_path)
+
+        cmd = [
+            self._ffmpeg_path,
+            "-hide_banner", "-loglevel", "error",
+            "-y", "-i", safe_input,
+            "-acodec", "pcm_s16le",
+            "-ar", str(safe_sample_rate),
+            "-ac", "1",  # Mono
+            "-t", "3600",  # Max 1 Stunde
+            safe_wav_path
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                safe_error = self._filter_error_message(result.stderr)
+                raise AudioProcessingError(f"FFmpeg Konvertierung fehlgeschlagen: {safe_error}")
+            if not os.path.exists(safe_wav_path):
+                raise AudioProcessingError("WAV-Datei wurde nicht erstellt")
+            log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio erfolgreich zu WAV konvertiert')
+        except Exception as e:
+            raise AudioProcessingError(f"FFmpeg Konvertierung: {str(e)}")
+
+    def convert_from_wav(self, input_wav: str, output_path: str, ext: str, bitrate: str, sample_rate: str, channels: int = 1) -> None:
+        """Konvertiert WAV zurück zu Original-Audio-Format mit Parametern"""
+        herkunft = 'ffmpeg_utils.py'
+        log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Konvertiere WAV zu Audio-Format')
+        
+        # Wähle Codec basierend auf Extension (erweitere bei Bedarf)
+        codec = "libmp3lame" if ext.lower() == '.mp3' else "aac"  # Fallback für andere (z.B. .m4a)
+        
+        cmd = [
+            self._ffmpeg_path, "-y",
+            "-i", input_wav,
+            "-c:a", codec,
+            "-b:a", bitrate,  # Original-Bitrate (z.B. "256k")
+            "-ar", str(sample_rate),  # Original-Sample-Rate
+            "-ac", str(channels),  # Original-Kanäle (1=Mono, 2=Stereo)
+            output_path
+        ]
+        
+        import subprocess
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            safe_error = self._filter_error_message(result.stderr)
+            log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Konvertierung fehlgeschlagen - Returncode: %d', result.returncode)
+            raise AudioProcessingError(f"Audio-Konvertierung fehlgeschlagen: {safe_error}")
+        
+        log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Konvertierung abgeschlossen')
+
+    def _get_codec_for_format(self, ext: str) -> str:
+        """Wählt Codec basierend auf Extension (erweiterbar)"""
+        codecs = {
+            '.mp3': 'libmp3lame',
+            '.aac': 'aac',
+            '.wav': 'pcm_s16le',
+            '.flac': 'flac',
+            '.ogg': 'libvorbis',
+            '.opus': 'libopus'
+        }
+        return codecs.get(ext, 'copy')  # Fallback: Copy wenn unbekannt
 
     def _filter_error_message(self, error_output: str) -> str:
         """Filtert sensitive Informationen aus Fehlermeldungen"""
@@ -226,27 +301,27 @@ class FFmpegUtils:
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Fehlermeldung gefiltert (neue Länge: %d Zeichen)', len(filtered))
         return filtered
 
-    def mux_audio_back(self, video_path: str, audio_path: str, output_path: str) -> None:
+    def mux_audio_back(self, media_path: str, audio_path: str, output_path: str) -> None:
         """Ersetzt Audio-Spur in Video (ohne Video-Neukodierung)"""
         herkunft = 'ffmpeg_utils.py'
         log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio-Video-Zusammenführung wird gestartet')
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video-Eingabe: %s', os.path.basename(video_path))
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video-Eingabe: %s', os.path.basename(media_path))
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Audio-Eingabe: %s', os.path.basename(audio_path))
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video-Ausgabe: %s', os.path.basename(output_path))
         if not self.is_available():
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'FFmpeg ist nicht verfügbar für Video-Zusammenführung')
             raise FFmpegNotFoundError("FFmpeg ist nicht verfügbar")
         # Eingabedateien validieren
-        if not os.path.exists(video_path):
-            log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Video-Datei existiert nicht: %s', video_path)
-            raise AudioProcessingError(f"Video-Datei existiert nicht: {video_path}")
+        if not os.path.exists(media_path):
+            log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Video-Datei existiert nicht: %s', media_path)
+            raise AudioProcessingError(f"Video-Datei existiert nicht: {media_path}")
         if not os.path.exists(audio_path):
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Audio-Datei existiert nicht: %s', audio_path)
             raise AudioProcessingError(f"Audio-Datei existiert nicht: {audio_path}")
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Eingabedateien validiert')
         cmd = [
             self._ffmpeg_path, "-y",
-            "-i", video_path,
+            "-i", media_path,
             "-i", audio_path,
             "-map", "0:v:0",  # Video vom ersten Input
             "-map", "1:a:0",  # Audio vom zweiten Input
@@ -318,10 +393,10 @@ class FFmpegUtils:
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Unerwarteter Fehler bei Filter-Anwendung: %s', str(e))
             raise AudioProcessingError(f"FFmpeg Filter: {str(e)}")
 
-    def get_video_info(self, video_path: str) -> dict:
+    def get_video_info(self, media_path: str) -> dict:
         """Extrahiert Video-Informationen mit FFprobe"""
         herkunft = 'ffmpeg_utils.py'
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Extrahiere Video-Informationen: %s', os.path.basename(video_path))
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Extrahiere Video-Informationen: %s', os.path.basename(media_path))
         if not self.is_available():
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'FFmpeg ist nicht verfügbar für Video-Info-Extraktion')
             raise FFmpegNotFoundError("FFmpeg ist nicht verfügbar")
@@ -329,7 +404,7 @@ class FFmpegUtils:
             self._ffprobe_path, "-v", "quiet",
             "-print_format", "json",
             "-show_format", "-show_streams",
-            video_path
+            media_path
         ]
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'FFprobe-Kommando vorbereitet')
         try:
@@ -359,11 +434,11 @@ class FFmpegUtils:
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Unerwarteter Fehler bei Video-Info-Extraktion: %s', str(e))
             raise AudioProcessingError(f"FFprobe: {str(e)}")
 
-    def extract_audio_preview(self, video_path: str, wav_path: str, duration: int = 30, sample_rate: int = None) -> None:
+    def extract_audio_preview(self, media_path: str, wav_path: str, duration: int = 30, sample_rate: int = None) -> None:
         """Extrahiert Audio-Vorschau mit variabler Sample-Rate"""
         herkunft = 'ffmpeg_utils.py'
         log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio-Vorschau-Extraktion wird gestartet')
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video: %s', os.path.basename(video_path))
+        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Video: %s', os.path.basename(media_path))
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Vorschau-Dauer: %d Sekunden', duration)
         if not self.is_available():
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'FFmpeg ist nicht verfügbar für Vorschau-Extraktion')
@@ -374,13 +449,13 @@ class FFmpegUtils:
             log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Verwende Standard-Sample-Rate für Vorschau: %d Hz', sample_rate)
         else:
             log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Verwende spezifizierte Sample-Rate: %d Hz', sample_rate)
-        safe_video_path = self._sanitize_file_path(video_path)
+        safe_media_path = self._sanitize_file_path(media_path)
         safe_wav_path = os.path.normpath(wav_path)
         cmd = [
             self._ffmpeg_path,
             "-hide_banner", "-loglevel", "error",
             "-y",
-            "-i", safe_video_path,
+            "-i", safe_media_path,
             "-vn",
             "-acodec", "pcm_s16le",
             "-ar", str(sample_rate),

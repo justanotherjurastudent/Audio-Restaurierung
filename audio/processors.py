@@ -10,6 +10,7 @@ import logging
 
 from utils.logger import log_with_prefix, get_normalized_logger
 from utils.config import Config
+from utils.validators import is_supported_file
 
 # Logger konfigurieren
 logger = get_normalized_logger('processors')
@@ -31,11 +32,11 @@ def _get_speechbrain_processor():
     from .speechbrain_voice_enhancer import SpeechBrainVoiceEnhancer
     return SpeechBrainVoiceEnhancer()
 
-class VideoProcessor:
-    """Hauptklasse für Video-zu-Audio-Verarbeitung"""
+class MediaProcessor:
+    """Hauptklasse für Medienverarbeitung"""
 
     def __init__(self):
-        log_with_prefix(logger, 'info', 'PROCESSORS', 'processors.py', 'VideoProcessor wird initialisiert')
+        log_with_prefix(logger, 'info', 'PROCESSORS', 'processors.py', 'MediaProcessor wird initialisiert')
         self.ffmpeg = FFmpegUtils()
         # Lazy Loading der Prozessoren
         self._processors_cache = {}
@@ -92,54 +93,78 @@ class VideoProcessor:
                 except Exception as e:
                     log_with_prefix(logger, 'warning', 'PROCESSORS', herkunft, 'Sichere Löschung fehlgeschlagen für %s: %s', os.path.basename(path), str(e))
 
-    def process_video(self, video_path: str, output_path: str,
-                      noise_method: str, method_params: Dict[str, Any],
-                      target_lufs: float = -20.0,
-                      voice_enhancement: bool = False,  # NEU
-                      voice_settings: Optional[Dict[str, Any]] = None,
-                      voice_method: Optional[str] = None,
-                      stop_event: Optional[Any] = None) -> Tuple[str, str]:
-        """Verarbeitet ein Video komplett - SICHERHEIT VERBESSERT"""
+    def process_media(self, input_path: str, output_path: str,
+                    noise_method: str, method_params: Dict[str, Any],
+                    target_lufs: float = -20.0,
+                    voice_enhancement: bool = False,  # NEU
+                    voice_settings: Optional[Dict[str, Any]] = None,
+                    voice_method: Optional[str] = None,
+                    stop_event: Optional[Any] = None) -> Tuple[str, str]:
+        """Verarbeitet ein Medium komplett"""
         herkunft = 'processors.py'
-        log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Video-Verarbeitung wird gestartet')
-        log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Eingabedatei: %s', os.path.basename(video_path))
+        log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Media-Verarbeitung wird gestartet')
+        log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Eingabedatei: %s', os.path.basename(input_path))
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Ausgabedatei: %s', os.path.basename(output_path))
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Rauschreduzierung: %s', noise_method)
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Ziel-LUFS: %s', target_lufs)
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Voice Enhancement: %s', voice_enhancement)
+        
         # Intelligente Bestimmung der voice_method
         if voice_method is None:
             voice_method = voice_settings.get('voice_method', 'classic') if voice_settings else 'classic'
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Voice-Methode bestimmt als: %s', voice_method)
+        
         if stop_event and stop_event.is_set():
             raise ProcessingCancelledException("Verarbeitung abgebrochen")
-        if not os.path.exists(video_path):
-            log_with_prefix(logger, 'error', 'PROCESSORS', herkunft, 'Video-Datei existiert nicht: %s', video_path)
-            raise AudioProcessingError(f"Video-Datei existiert nicht: {video_path}")
+        
+        is_valid, msg, media_type = is_supported_file(input_path)
+        if not is_valid:
+            raise AudioProcessingError(msg)
+        log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, f'Media-Typ: {media_type}')
+        
+        if not os.path.exists(input_path):
+            log_with_prefix(logger, 'error', 'PROCESSORS', herkunft, 'Datei existiert nicht: %s', input_path)
+            raise AudioProcessingError(f"Datei existiert nicht: {input_path}")
+        
         # Bestimme Sample-Rate basierend auf Methode
         sample_rate = 48000 if noise_method == "deepfilternet3" else 22050
         log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Sample-Rate für Methode %s: %d Hz', noise_method, sample_rate)
+        
+        # NEU: Hole Original-Info für Audio-only (Bitrate, Sample-Rate, Codec) – vor der Verarbeitung
+        original_info = self.ffmpeg.get_video_info(input_path)  # Funktioniert für Audio/Video
+        original_sample_rate = original_info.get('audio_sample_rate', sample_rate)  # Fallback zu methodenbasierter Rate
+        original_bitrate = original_info.get('audio_bitrate', '128k')  # Fallback 128k
+        original_codec = original_info.get('audio_codec', 'aac')  # Fallback AAC
+        log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, f'Original: Sample-Rate {original_sample_rate} Hz, Bitrate {original_bitrate}, Codec {original_codec}')
+        
         # NEU: Sicheres Temp-Verzeichnis mit restriktiven Permissions
         with tempfile.TemporaryDirectory(prefix="audiorest_") as temp_dir:
             log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Temporäres Verzeichnis erstellt: %s', temp_dir)
             # NEU: Permissions nur für Owner setzen
             os.chmod(temp_dir, stat.S_IRWXU)  # 700
             log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Temporäres Verzeichnis mit restriktiven Berechtigungen (700) konfiguriert')
+            
             # NEU: Sichere temporäre Dateien mit zufälligen Namen
             wav_original, wav_normalized, wav_processed, session_id = self._create_secure_temp_files(temp_dir)
+            
             try:
-                # 1. Audio extrahieren
+                # 1. Audio extrahieren – NEU: Für Audio mit Original-Sample-Rate
                 if stop_event and stop_event.is_set():
                     raise ProcessingCancelledException("Verarbeitung abgebrochen")
                 log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Extrahiere Audio aus Video')
-                self.ffmpeg.extract_audio(video_path, wav_original, sample_rate)
+                if media_type == 'video':
+                    self.ffmpeg.extract_audio(input_path, wav_original, sample_rate)
+                else:  # Audio
+                    self.ffmpeg.convert_to_wav(input_path, wav_original, original_sample_rate)  # NEU: Verwende Original-Sample-Rate
                 log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Audio-Extraktion abgeschlossen: %s', os.path.basename(wav_original))
+                
                 # 2. LUFS-Normalisierung
                 if stop_event and stop_event.is_set():
                     raise ProcessingCancelledException("Verarbeitung abgebrochen")
                 log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Starte LUFS-Normalisierung auf %s LUFS', target_lufs)
                 self._normalize_loudness(wav_original, wav_normalized, target_lufs)
                 log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'LUFS-Normalisierung abgeschlossen')
+                
                 # 3. Rauschreduzierung mit Fallback-System
                 if stop_event and stop_event.is_set():
                     raise ProcessingCancelledException("Verarbeitung abgebrochen")
@@ -199,14 +224,34 @@ class VideoProcessor:
                 else:
                     log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'ℹ️ Voice Enhancement ist deaktiviert oder Parameter sind falsch')
                     log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, '🔍 Prüfung: voice_enhancement=%s, Typ=%s', voice_enhancement, type(voice_enhancement))
-                # 4. Audio zurück ins Video
+                # 5. Audio zurück ins Video – NEU: Für Audio mit Original-Parametern
                 if stop_event and stop_event.is_set():
                     raise ProcessingCancelledException("Verarbeitung abgebrochen")
                 log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Füge verarbeitetes Audio zurück in Video ein')
-                self.ffmpeg.mux_audio_back(video_path, wav_processed, output_path)
+                if media_type == 'video':
+                    self.ffmpeg.mux_audio_back(input_path, wav_processed, output_path)
+                else:  # Audio – NEU: Speichere mit Original-Parametern als MP3 (oder Original-Codec)
+                    original_ext = os.path.splitext(input_path)[1].lower()
+                    if original_codec == 'mp3':  # Oder passe an, falls andere Codecs
+                        cmd = [
+                            self.ffmpeg._ffmpeg_path, "-y",
+                            "-i", wav_processed,
+                            "-c:a", "libmp3lame",  # MP3-Encoder
+                            "-b:a", original_bitrate,  # Original-Bitrate (z.B. "256k")
+                            "-ar", str(original_sample_rate),  # Original-Sample-Rate
+                            output_path
+                        ]
+                        import subprocess
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                        if result.returncode != 0:
+                            raise AudioProcessingError(f"Audio-Konvertierung fehlgeschlagen: {result.stderr}")
+                    else:
+                        # Fallback für andere Audio-Codecs (z.B. AAC)
+                        self.ffmpeg.convert_from_wav(wav_processed, output_path, original_ext, original_bitrate, original_sample_rate)
                 log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Video-Verarbeitung erfolgreich abgeschlossen')
                 log_with_prefix(logger, 'debug', 'PROCESSORS', herkunft, 'Finale Ausgabedatei: %s', os.path.basename(output_path))
                 return used_method, output_path
+            
             except ProcessingCancelledException:
                 log_with_prefix(logger, 'info', 'PROCESSORS', herkunft, 'Verarbeitung wurde vom Benutzer abgebrochen')
                 raise

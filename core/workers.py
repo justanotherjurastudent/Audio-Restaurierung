@@ -11,14 +11,14 @@ import logging
 from utils.logger import log_with_prefix
 
 from core.exceptions import ProcessingCancelledException
-from audio.processors import VideoProcessor
+from audio.processors import MediaProcessor
 from utils.config import Config, DEFAULT_MAX_FILE_SIZE_GB
 
 # Logger konfigurieren
 logger = logging.getLogger("AudioRestorer")
 
 class ProcessingWorker:
-    """Worker-Thread für die Video-Verarbeitung"""
+    """Worker-Thread für die Media-Verarbeitung"""
     
     def __init__(self, result_callback: Callable[[str, str, str], None],
                  max_queue_size: int = 50, max_file_size_gb: float = DEFAULT_MAX_FILE_SIZE_GB):
@@ -42,7 +42,7 @@ class ProcessingWorker:
         self.cancelled_files = 0
         self.warnings = []
         self.errors = []
-        self.video_processor = VideoProcessor()
+        self.media_processor = MediaProcessor()
         log_with_prefix(logger, 'debug', 'WORKERS', herkunft, 'Sicherheitslimits: Max-Queue=%d, Max-Dateigröße=%.1f GB', max_queue_size, max_file_size_gb)
 
     def _validate_file_for_processing(self, file_path: str) -> None:
@@ -303,9 +303,9 @@ class ProcessingWorker:
                 voice_enhancement = voice_enhancement.lower() in ['true', '1', 'yes', 'on']
                 print(f" Korrigiert auf: {voice_enhancement}")
             print(f"🔧 DEBUG Ende\n")
-            # Video verarbeiten - ERWEITERT mit Voice Enhancement
-            used_method, output_path = self.video_processor.process_video(
-                video_path=job.file_path,
+            # Media verarbeiten - ERWEITERT mit Voice Enhancement
+            used_method, output_path = self.media_processor.process_media(
+                input_path=job.file_path,
                 output_path=job.get_output_path(),
                 noise_method=job.config['method'],
                 method_params=job.config['method_params'],

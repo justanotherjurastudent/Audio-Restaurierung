@@ -6,6 +6,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from utils.logger import log_with_prefix, get_normalized_logger
+from .config import Config
 
 # Logger konfigurieren
 logger = get_normalized_logger('validators')
@@ -107,40 +108,40 @@ def check_ffmpeg() -> bool:
     except (subprocess.TimeoutExpired, FileNotFoundError, ImportError):
         return False
 
-def is_video_file(file_path: str) -> tuple[bool, str]:
-    """Sichere Video-Datei-Validierung mit Magic Bytes Check"""
-    
+def is_supported_file(file_path: str) -> tuple[bool, str, str]:  # Rückgabe: (is_valid, message, type='video' or 'audio')
+    """Sichere Validierung für Video- oder Audio-Dateien mit Magic Bytes Check"""
     try:
-        # Basis-Checks
         if not os.path.exists(file_path):
-            return False, "Datei existiert nicht"
-        
+            return False, "Datei existiert nicht", ""
         if not os.path.isfile(file_path):
-            return False, "Pfad ist keine Datei"
-        
-        # Dateigröße prüfen
+            return False, "Pfad ist keine Datei", ""
         file_size = os.path.getsize(file_path)
         if file_size == 0:
-            return False, "Datei ist leer"
-        
+            return False, "Datei ist leer", ""
         if file_size > 5 * 1024 * 1024 * 1024:  # 5GB Limit
-            return False, "Datei zu groß (>5GB)"
-        
-        # Extension-Check
-        video_extensions = {'.mp4', '.mov', '.mkv', '.avi', '.m4v', '.webm', '.flv', '.wmv'}
+            return False, "Datei zu groß (>5GB)", ""
+
         file_extension = os.path.splitext(file_path)[1].lower()
-        
-        if file_extension not in video_extensions:
-            return False, "Unsupported format"
-        
-        # NEU: Magic Number Check (File Header)
-        if not _verify_video_magic_bytes(file_path):
-            return False, "Datei entspricht nicht dem Format (Magic Bytes)"
-        
-        return True, "OK"
-        
+
+        # Video-Check (unverändert)
+        video_extensions = {'.mp4', '.mov', '.mkv', '.avi', '.m4v', '.webm', '.flv', '.wmv'}
+        if file_extension in video_extensions:
+            if not _verify_video_magic_bytes(file_path):
+                return False, "Datei entspricht nicht dem Video-Format (Magic Bytes)", ""
+            return True, "OK", "video"
+
+        # Geändert: Audio-Check hinzugefügt
+        SUPPORTED_AUDIO_EXTENSIONS = {
+        '.mp3', '.aac', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.ac3', '.dts', '.pcm'
+        }
+        if file_extension in SUPPORTED_AUDIO_EXTENSIONS:
+            if not _verify_audio_magic_bytes(file_path, file_extension):
+                return False, "Datei entspricht nicht dem Audio-Format (Magic Bytes)", ""
+            return True, "OK", "audio"
+
+        return False, "Nicht unterstütztes Format", ""
     except (OSError, PermissionError) as e:
-        return False, f"Dateizugriff fehlgeschlagen: {e}"
+        return False, f"Dateizugriff fehlgeschlagen: {e}", ""
 
 def _verify_video_magic_bytes(file_path: str) -> bool:
     """Prüft Video-File-Headers - NEU HINZUFÜGEN"""
@@ -168,13 +169,29 @@ def _verify_video_magic_bytes(file_path: str) -> bool:
         
     except:
         return False
+def _verify_audio_magic_bytes(file_path: str, ext: str) -> bool:
+    """Prüft Audio-File-Headers für Sicherheit"""
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(12)
+        if ext == '.mp3' and header.startswith(b'ID3'):
+            return True
+        if ext == '.wav' and header.startswith(b'RIFF'):
+            return True
+        if ext == '.flac' and header.startswith(b'fLaC'):
+            return True
+        if ext == '.ogg' and header.startswith(b'OggS'):
+            return True
+        # Füge weitere Checks für andere Formate hinzu, falls nötig
+        return False
+    except:
+        return False
 
-
-def get_supported_video_formats() -> List[str]:
-    """Gibt Liste unterstützter Video-Formate zurück"""
+def get_supported_formats() -> List[str]:  # Geändert: Erweiterte Liste
+    """Gibt Liste unterstützter Formate zurück (Video + Audio)"""
     return [
-        "*.mp4", "*.mov", "*.mkv", "*.avi", "*.m4v", 
-        "*.webm", "*.flv", "*.wmv", "*.mpg", "*.mpeg"
+        "*.mp4", "*.mov", "*.mkv", "*.avi", "*.m4v", "*.webm", "*.flv", "*.wmv",  # Videos
+        "*.mp3", "*.aac", "*.wav", "*.flac", "*.ogg", "*.opus", "*.m4a"  # Audio
     ]
 
 def validate_file_path(file_path: str) -> tuple[bool, str]:
@@ -411,7 +428,7 @@ def get_available_methods() -> Dict[str, Dict[str, Any]]:
         import df.enhance
         methods['deepfilternet3'] = {
             'name': 'DeepFilterNet3 (KI)',
-            'description': 'Beste QualitätModernste KI',
+            'description': 'Beste Qualität • Modernste KI',
             'available': True,
             'sample_rate': 48000
         }

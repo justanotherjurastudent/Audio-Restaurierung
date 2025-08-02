@@ -1,7 +1,5 @@
 """Audio-Vorschau-Widget mit Verarbeitung und Play/Pause/Stop-Funktionalität"""
 
-import sys
-import tkinter as tk
 import customtkinter as ctk
 import threading
 import time
@@ -17,6 +15,7 @@ import json
 # NEU: Import für log_with_prefix (behebt 'not defined'-Fehler)
 from utils.logger import log_with_prefix, get_normalized_logger
 from utils.config import Config  # NEU: Import für Konfiguration
+from utils.validators import is_supported_file  # NEU: Import für Dateityp-Prüfung
 from audio.ffmpeg_utils import FFmpegUtils
 
 # Logger konfigurieren
@@ -233,7 +232,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self._width = width
         self.player = AudioPreviewPlayer()
         self.ffmpeg = FFmpegUtils()
-        self.current_video = None
+        self.current_media = None
         self.temp_preview_file = None
         self.processed_preview_file = None
         self.temp_processed_files = []
@@ -309,18 +308,18 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self._set_controls_enabled(False)
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'UI-Komponenten erfolgreich erstellt')
 
-    def load_video(self, video_path: str):
-        """Lädt Video für Audio-Vorschau"""
+    def load_media(self, media_path: str):
+        """Lädt Medien für Audio-Vorschau"""
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Video wird für Audio-Vorschau geladen: %s', os.path.basename(video_path))
-        self.current_video = video_path
-        self.info_label.configure(text=f"Lade: {os.path.basename(video_path)}")
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Medien wird für Audio-Vorschau geladen: %s', os.path.basename(media_path))
+        self.current_media = media_path
+        self.info_label.configure(text=f"Lade: {os.path.basename(media_path)}")
         self.status_label.configure(text="")
         # Verarbeitete Datei zurücksetzen
         self.processed_preview_file = None
         self.used_methods = None
-        if video_path in self.processed_previews:
-            processed_file, used_method, saved_hash = self.processed_previews[video_path]
+        if media_path in self.processed_previews:
+            processed_file, used_method, saved_hash = self.processed_previews[media_path]
             if os.path.exists(processed_file):
                 self.processed_preview_file = processed_file
                 self.used_methods = used_method
@@ -331,17 +330,20 @@ class AudioPreviewWidget(ctk.CTkFrame):
                     log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Preview in Player geladen')
             else:
                 log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Bestehende Preview nicht gefunden (gelöscht?) - setze zurück')
-                del self.processed_previews[video_path]
+                del self.processed_previews[media_path]
         log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Vorherige verarbeitete Vorschau zurückgesetzt')
         # In separatem Thread laden
-        threading.Thread(target=self._load_video_async,
-                         args=(video_path,), daemon=True).start()
+        threading.Thread(target=self._load_media_async,
+                         args=(media_path,), daemon=True).start()
 
-    def _load_video_async(self, video_path: str):
-        """Lädt Video asynchron (nur Extraktion, keine Verarbeitung)"""
+    def _load_media_async(self, media_path: str):
+        """Lädt Medien asynchron (nur Extraktion, keine Verarbeitung)"""
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Asynchrone Video-Ladung gestartet')
+        log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Asynchrone Medien-Ladung gestartet')
         try:
+            is_valid, msg, media_type = is_supported_file(media_path)
+            if not is_valid:
+                raise Exception(msg)
             # Temporäre Vorschau-Datei erstellen
             if self.temp_preview_file:
                 try:
@@ -354,21 +356,25 @@ class AudioPreviewWidget(ctk.CTkFrame):
             temp_name = f"audio_preview_{int(time.time())}.wav"
             self.temp_preview_file = os.path.join(temp_dir, temp_name)
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Neue temporäre Vorschau-Datei: %s', os.path.basename(self.temp_preview_file))
-            # Audio extrahieren (30s Vorschau)
-            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Extrahiere 30s Audio-Vorschau aus Video')
-            self.ffmpeg.extract_audio_preview(video_path, self.temp_preview_file)
+            # Audio extrahieren/kopieren (30s Vorschau)
+            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, f'Extrahiere/Lade 30s Audio-Vorschau ({media_type})')
+            if media_type == 'video':
+                self.ffmpeg.extract_audio_preview(media_path, self.temp_preview_file)
+            else:  # Audio
+                # Für Audio: Direkt zu WAV konvertieren (Mono, 30s)
+                self.ffmpeg.convert_to_wav(media_path, self.temp_preview_file, sample_rate=22050)
             self._debug_audio_info(self.temp_preview_file, "Original-Vorschau")
             # UI aktualisieren (im Main Thread)
             self.after(0, self._on_load_success)
         except Exception as e:
-            log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Asynchrone Video-Ladung fehlgeschlagen: %s', str(e))
+            log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Asynchrone Audio-Ladung fehlgeschlagen: %s', str(e))
             self.after(0, self._on_load_error, str(e))
 
     def _on_load_success(self):
         """Erfolgreich geladen"""
         herkunft = 'audio_preview.py'
-        filename = os.path.basename(self.current_video) if self.current_video else "Unbekannt"
-        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Video-Vorschau erfolgreich geladen: %s', filename)
+        filename = os.path.basename(self.current_media) if self.current_media else "Unbekannt"
+        log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Medien-Vorschau erfolgreich geladen: %s', filename)
         self.info_label.configure(text=f"Bereit: {filename}")
             
         # Geändert: Bedingter Status-Set basierend auf verarbeiteter Version
@@ -384,7 +390,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
     def _on_load_error(self, error_msg: str):
         """Fehler beim Laden"""
         herkunft = 'audio_preview.py'
-        log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Video-Vorschau-Ladung fehlgeschlagen: %s', error_msg)
+        log_with_prefix(logger, 'error', 'PREVIEW', herkunft, 'Audio-Vorschau-Ladung fehlgeschlagen: %s', error_msg)
         self.info_label.configure(text=f"Fehler: {error_msg}")
         self.status_label.configure(text="")
         self._set_controls_enabled(False)
@@ -408,7 +414,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
         herkunft = 'audio_preview.py'
         log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Asynchrone Vorschau-Verarbeitung gestartet')
         try:
-            from audio.processors import VideoProcessor
+            from audio.processors import MediaProcessor
             # Konfiguration vom Hauptfenster sammeln
             config = self.main_window._collect_processing_config()
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitungskonfiguration vom Hauptfenster erhalten')
@@ -417,9 +423,6 @@ class AudioPreviewWidget(ctk.CTkFrame):
             if noise_method == "deepfilternet3":
                 target_sample_rate = 48000
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'DeepFilterNet3 erkannt - verwende 48kHz Vorschau')
-            elif noise_method == "voicefixer":  # Geändert: VoiceFixer-spezifische Konfiguration
-                target_sample_rate = 44100  # VoiceFixer funktioniert gut mit 44.1kHz
-                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'VoiceFixer erkannt - verwende 44.1kHz Vorschau')
             else:
                 target_sample_rate = 22050
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Andere Methode erkannt - verwende 22kHz Vorschau für Performance')
@@ -431,7 +434,7 @@ class AudioPreviewWidget(ctk.CTkFrame):
             log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Vorschau-Datei: %s', os.path.basename(self.processed_preview_file))
             self.temp_processed_files.append(self.processed_preview_file)
             # Mini-Processor erstellen
-            processor = VideoProcessor()
+            processor = MediaProcessor()
             with tempfile.TemporaryDirectory(prefix="preview_") as temp_processing_dir:
                 log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Temporäres Verarbeitungsverzeichnis erstellt')
                 # Zwischendateien - alle mit methodenspezifischer Sample-Rate
@@ -486,36 +489,6 @@ class AudioPreviewWidget(ctk.CTkFrame):
                             enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
                             used_method += " + Voice-Klassisch"
                             log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
-
-                    elif voice_method == "voicefixer":
-                        # VoiceFixer (Multi-task AI)
-                        try:
-                            from audio.voicefixer_enhancer import VoiceFixerEnhancer
-                            enhancer = VoiceFixerEnhancer()
-                            if enhancer.is_available():
-                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende VoiceFixer Voice Enhancement')
-                                voice_settings = config['voice_settings'].copy()
-                                voice_settings['original_sample_rate'] = target_sample_rate
-                                voice_settings['target_sample_rate'] = target_sample_rate
-                                enhancer.process(wav_processed, wav_enhanced, voice_settings)
-                                used_method += " + VoiceFixer"
-                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Gelungen (Methode: VoiceFixer AI)')
-                                if Config.get_debug_mode():
-                                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitung: Details - Input: %s, Output: %s', wav_processed, wav_enhanced)
-                            else:
-                                log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
-                                from audio.voice_enhancer import VoiceAudioEnhancer
-                                enhancer = VoiceAudioEnhancer()
-                                enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
-                                used_method += " + Voice-Klassisch"
-                                log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
-                        except ImportError:
-                            log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Initialisierung: ❌ Nicht verfügbar - Fallback zu klassisch')
-                            from audio.voice_enhancer import VoiceAudioEnhancer
-                            enhancer = VoiceAudioEnhancer()
-                            enhancer.process(wav_processed, wav_enhanced, config['voice_settings'])
-                            used_method += " + Voice-Klassisch"
-                            log_with_prefix(logger, 'info', 'PREVIEW', herkunft, '🔄 Klassisches Voice Enhancement als Fallback angewendet')
                     else:
                         # Klassische Voice Enhancement
                         log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verwende klassisches Voice Enhancement')
@@ -535,9 +508,9 @@ class AudioPreviewWidget(ctk.CTkFrame):
                 log_with_prefix(logger, 'info', 'PREVIEW', herkunft, 'Verarbeitung: ✅ Abgeschlossen mit Methode %s', used_method)
                  # Geändert: Nach Erfolg, speichere in Dict und Liste
                 config_hash = self._get_config_hash(config)
-                if self.current_video in self.processed_previews:
-                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Überschreibe bestehende Verarbeitung für %s (neue Config)', os.path.basename(self.current_video))
-                self.processed_previews[self.current_video] = (self.processed_preview_file, used_method, config_hash)
+                if self.current_media in self.processed_previews:
+                    log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Überschreibe bestehende Verarbeitung für %s (neue Config)', os.path.basename(self.current_media))
+                self.processed_previews[self.current_media] = (self.processed_preview_file, used_method, config_hash)
                 self.temp_processed_files.append(self.processed_preview_file)  # Bestehend: Tracke für Löschung
                 log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Verarbeitete Preview in Dict gespeichert (Hash: %s)', config_hash)
                 if Config.get_debug_mode():
@@ -632,8 +605,8 @@ class AudioPreviewWidget(ctk.CTkFrame):
         self._set_controls_enabled(True)
         
         # Geändert: Logging erweitern für Klarheit bei Neuverarbeiten
-        if self.current_video in self.processed_previews:
-            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Updated verarbeitete Preview für %s mit neuer Methode: %s', os.path.basename(self.current_video), used_method)
+        if self.current_media in self.processed_previews:
+            log_with_prefix(logger, 'debug', 'PREVIEW', herkunft, 'Updated verarbeitete Preview für %s mit neuer Methode: %s', os.path.basename(self.current_media), used_method)
         
         # Verarbeitete Datei in Player laden
         if self.player.load(self.processed_preview_file):
@@ -866,7 +839,5 @@ class AudioPreviewWidget(ctk.CTkFrame):
     # Neu: Hilfsfunktion für Config-Hash (füge ans Ende der Klasse hinzu)
     def _get_config_hash(self, config: dict) -> str:
         """Berechnet reproduzierbaren Hash der Config für Vergleich"""
-        import hashlib
-        import json
         config_str = json.dumps(config, sort_keys=True)  # Sortiert für Konsistenz
         return hashlib.md5(config_str.encode('utf-8')).hexdigest()
