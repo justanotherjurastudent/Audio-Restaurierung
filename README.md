@@ -85,7 +85,7 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 ## 🖼️ Screenshots
 
 ### Hauptfenster mit Voice Enhancement
-<img width="1101" height="884" alt="image" src="https://github.com/user-attachments/assets/94068edd-eb93-486f-a769-d5a47eb48711" />
+<"<img width="1092" height="978" alt="image" src="https://github.com/user-attachments/assets/ff790cdc-1d47-452c-a8f0-34bdb777d68a" />
 
 *Das Screenshot zeigt die neue Voice Enhancement Sektion mit Methodenauswahl und konfigurierbaren Parametern für beide Ansätze.*
 
