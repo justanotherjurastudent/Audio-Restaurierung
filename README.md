@@ -91,7 +91,7 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 
 ## 🚀 Installation
 Es gibt zwei Wege, das Programm zu benutzen.
-1. Rechts auf dieser Seite findet man eine exe-Version, die auf Windows sofort gestartet werden kann. Dies ist die einfachste Möglichkeit.
+1. Rechts auf dieser Seite findet man unter [Releases](https://github.com/justanotherjurastudent/Audio-Restaurierung/releases/) eine exe-Version, die auf Windows sofort gestartet werden kann. Dies ist die einfachste Möglichkeit.
 2. Das Programm kann auch als Projekt heruntergeladen werden. Dazu verweise ich auf folgende Anleitung:
 
 ### Voraussetzungen
