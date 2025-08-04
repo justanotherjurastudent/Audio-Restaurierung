@@ -90,13 +90,20 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 *Das Screenshot zeigt die neue Voice Enhancement Sektion mit Methodenauswahl und konfigurierbaren Parametern für beide Ansätze.*
 
 ## 🚀 Installation
+Es gibt zwei Wege, das Programm zu benutzen.
+1. Rechts auf dieser Seite findet man eine exe-Version, die auf Windows sofort gestartet werden kann. Dies ist die einfachste Möglichkeit.
+2. Das Programm kann auch als Projekt heruntergeladen werden. Dazu verweise ich auf folgende Anleitung:
 
 ### Voraussetzungen
 
 1. **Python 3.8 oder höher**
-python --version # Sollte Python 3.8+ anzeigen
+Python muss installiert sein. Die Version hiervon sollte 3.8 oder höher sein. Wenn man Python von der offiziellen Webseite herunterlädt, dann ist das der Fall. Ansonsten kann man die Version überprüfen im PowerShell-Fenster:
+```ps
+python --version
+```
 
 2. **FFmpeg** (essentiell für Video-Verarbeitung)
+Damit die Audiospuren verarbeitet werden können, braucht es FFmpeg.
 
 **Windows:**
 - Laden Sie FFmpeg von https://ffmpeg.org/download.html herunter
@@ -122,7 +129,7 @@ cd audio_restauration_from_videos
 pip install -r requirements.txt
 
 3. **Programm starten**
-python main.py  # ✅ Neu
+python main.py
 
 
 
