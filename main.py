@@ -16,12 +16,12 @@ def setup_exe_environment():
     """Konfiguriert Umgebung für .exe-Version"""
     herkunft = 'main.py'
     logger = setup_logger("AudioRestorer")
-    log_with_prefix(logger, 'info', 'MAIN', herkunft, '🔍 .exe-Modus erkannt - Konfiguriere Umgebung')
     import sys
     import os
     if getattr(sys, 'frozen', False):
         # ULTIMATIVE LOGGER-DEAKTIVIERUNG GANZ AM ANFANG
         try:
+            log_with_prefix(logger, 'info', 'MAIN', herkunft, '🔍 .exe-Modus erkannt - Konfiguriere Umgebung')
             # Deaktiviere alle bekannten Logger-Systeme
             os.environ['LOGURU_LEVEL'] = 'CRITICAL'
             os.environ['DF_LOG_LEVEL'] = 'CRITICAL'

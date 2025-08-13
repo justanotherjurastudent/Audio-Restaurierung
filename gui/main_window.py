@@ -37,18 +37,30 @@ class AudioRestorerMainWindow(ctk.CTk):
         log_with_prefix(logger, 'info', 'MAIN', herkunft, f"🎵 {APP_NAME} v{APP_VERSION} wird gestartet...")
 
         self.title(f"🎵 {APP_NAME} v{APP_VERSION}")
-        self.geometry(f"{Dimensions.WINDOW_WIDTH}x{Dimensions.WINDOW_HEIGHT}")
-        self.resizable(True, False)
+
+        # Skalierbare Fenstergröße basierend auf der Bildschirmauflösung
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+
+        # Kleinere Mindestgröße für Laptops
+        min_width = 1024
+        min_height = 720
+
+        # Fenstergröße auf einen Bruchteil des Bildschirms setzen, aber mit Mindestgröße
+        window_width = max(min_width, int(screen_width * 0.7))
+        window_height = max(min_height, int(screen_height * 0.75))
         
-        # NEU: Positioniere das Fenster zentriert, aber weiter oben
-        screen_width = self.winfo_screenwidth()  # Bildschirmbreite
-        screen_height = self.winfo_screenheight()  # Bildschirmhöhe
+        # Sicherstellen, dass das Fenster nicht größer als der Bildschirm ist
+        window_width = min(window_width, screen_width)
+        window_height = min(window_height, screen_height - 40) # 40px Puffer für die Taskleiste
 
-        # Zentriere horizontal (x), platziere im oberen Drittel (y)
-        x = (screen_width - Dimensions.WINDOW_WIDTH) // 2
-        y = (screen_height - Dimensions.WINDOW_HEIGHT) // 3  # // 3 für oberen Bereich (anpassen, z.B. // 4 für noch höher)
+        self.geometry(f"{window_width}x{window_height}")
+        self.resizable(True, True) # Fenster ist in beide Richtungen skalierbar
 
-        self.geometry(f"{Dimensions.WINDOW_WIDTH}x{Dimensions.WINDOW_HEIGHT}+{x}+{y}")
+        # Fenster zentrieren
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.geometry(f"+{x}+{y}")
 
         # Disable dangerous tkinter features
         self.tk.call('encoding', 'system', 'utf-8')  # Force safe encoding
@@ -264,13 +276,14 @@ class AudioRestorerMainWindow(ctk.CTk):
         main_container = ctk.CTkFrame(self)
         main_container.pack(fill="both", expand=True, padx=Dimensions.MAIN_PADDING, pady=(0, 10))
 
+        # Spaltenkonfiguration für das Haupt-Layout (50:50 Aufteilung)
+        main_container.grid_columnconfigure(0, weight=1)  # Linke Spalte
+        main_container.grid_columnconfigure(1, weight=1)  # Rechte Spalte
+        main_container.grid_rowconfigure(0, weight=1)
+
         # Container für die linke Hälfte
         left_container = ctk.CTkFrame(main_container)
-        left_container.pack(side="left", fill="both", expand=True, padx=(10, 5), pady=10)
-
-        # Setze die Breite auf 50% des Hauptfensters
-        left_container.pack_propagate(False)
-        left_container.configure(width=Dimensions.WINDOW_WIDTH // 2)
+        left_container.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
 
         # Scrollbarer Container für Einstellungen innerhalb des linken Containers
         left_scroll_container = ctk.CTkScrollableFrame(left_container, orientation="vertical")
@@ -278,33 +291,15 @@ class AudioRestorerMainWindow(ctk.CTk):
 
         # Frame für Einstellungen innerhalb des Scroll-Containers
         self.left_frame = ctk.CTkFrame(left_scroll_container, fg_color="transparent")
-        self.left_frame.pack(fill="x", expand=True)  # Changed to fill="x"
-
-        # Wichtig: Konfiguriere die Breite des scrollbaren Inhalts
-        def configure_scroll_width(event):
-            # Setze die Breite des Scroll-Containers auf die verfügbare Breite
-            try:
-                # Verfügbare Breite berechnen
-                container_width = left_container.winfo_width()
-                if container_width <= 1:  # Noch nicht gerendert
-                    return
-                desired_width = container_width - 40  # Platz für Scrollbar und Padding
-                log_with_prefix(logger, 'debug', 'MAIN', herkunft, 'Passe Scroll-Container-Breite an: %d px', desired_width)
-
-                # Breite für alle direkten Container-Kinder setzen
-                for child in self.left_frame.winfo_children():
-                    if isinstance(child, ctk.CTkFrame):
-                        child.configure(width=desired_width)
-                log_with_prefix(logger, 'debug', 'MAIN', herkunft, 'Container-Breiten aktualisiert für %d Kinder', len([c for c in self.left_frame.winfo_children() if isinstance(c, ctk.CTkFrame)]))
-            except Exception as e:
-                log_with_prefix(logger, 'warning', 'MAIN', herkunft, f"Fehler beim Anpassen der Scroll-Container-Breite: {str(e)}")
-
-        # Bind the function to container resize
-        left_container.bind('<Configure>', configure_scroll_width)
+        self.left_frame.pack(fill="x", expand=True)
 
         # Rechte Spalte - Dateien und Buttons
-        self.right_frame = ctk.CTkFrame(main_container)
-        self.right_frame.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
+        right_container = ctk.CTkFrame(main_container)
+        right_container.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+
+        # Scrollbarer Frame für die rechte Seite
+        self.right_frame = ctk.CTkScrollableFrame(right_container)
+        self.right_frame.pack(fill="both", expand=True)
 
         self._create_settings_panel()
         self._create_files_panel()
@@ -1092,11 +1087,24 @@ class AudioRestorerMainWindow(ctk.CTk):
 
             method_name = self.available_methods[processing_config['method']]['name']
             lufs_value = processing_config['target_lufs']
+            voice_method = processing_config.get('voice_method')
+            voice_enabled = processing_config.get('voice_enhancement', False)
+
+            # Stimmverbesserung-Info ergänzen
+            if voice_enabled and voice_method:
+                voice_method_text = f", Stimmverbesserung: {voice_method}"
+            else:
+                voice_method_text = ""
+
             self.status_label.configure(
-                text=f"Verarbeitung gestartet mit {method_name} (LUFS: {lufs_value})"
+                text=f"Verarbeitung gestartet mit {method_name} (LUFS: {lufs_value}{voice_method_text})"
             )
 
-            log_with_prefix(logger, 'info', 'MAIN', herkunft, 'Verarbeitung gestartet: %d Dateien mit Methode "%s" und LUFS-Ziel %.2f', file_count, method_name, lufs_value)
+            log_with_prefix(
+                logger, 'info', 'MAIN', herkunft,
+                'Verarbeitung gestartet: %d Dateien mit Methode "%s" und LUFS-Ziel %.2f%s',
+                file_count, method_name, lufs_value, voice_method_text
+            )
             print(f"🚀 Verarbeitung gestartet: {len(file_paths)} Dateien")
 
             # ✅ HIER erst Result-Checks starten:

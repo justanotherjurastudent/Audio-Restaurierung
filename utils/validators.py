@@ -94,10 +94,26 @@ def check_dependencies() -> bool:
     log_with_prefix(logger, 'info', 'VALIDATORS', 'check_dependencies', msg)
     return True
 
+from .ffmpeg_path import get_ffmpeg_path
+
 def check_ffmpeg() -> bool:
-    """Prüft FFmpeg-Verfügbarkeit"""
+    """Prüft FFmpeg-Verfügbarkeit durch Aufruf von get_ffmpeg_path."""
     try:
         import subprocess
+        # Hole den Pfad zur ffmpeg.exe
+        ffmpeg_executable = get_ffmpeg_path('ffmpeg.exe')
+        
+        # Führe einen stillen Befehl aus, um die Verfügbarkeit zu prüfen
+        subprocess.run(
+            [ffmpeg_executable, "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Wenn der Befehl fehlschlägt oder die Datei nicht gefunden wird
+        return False
         result = subprocess.run(
             ["ffmpeg", "-version"],
             capture_output=True,
@@ -135,6 +151,10 @@ def is_supported_file(file_path: str) -> tuple[bool, str, str]:  # Rückgabe: (i
         '.mp3', '.aac', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.ac3', '.dts', '.pcm'
         }
         if file_extension in SUPPORTED_AUDIO_EXTENSIONS:
+            # Bei M4A ist der Magic-Byte-Check oft unzuverlässig, da es ein Container ist.
+            # Wir verlassen uns hier auf die Erweiterung und FFmpeg.
+            if file_extension == '.m4a':
+                return True, "OK", "audio"
             if not _verify_audio_magic_bytes(file_path, file_extension):
                 return False, "Datei entspricht nicht dem Audio-Format (Magic Bytes)", ""
             return True, "OK", "audio"

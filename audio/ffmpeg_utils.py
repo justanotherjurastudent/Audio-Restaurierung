@@ -7,6 +7,7 @@ import sys
 import logging
 from typing import List, Optional
 from utils.logger import log_with_prefix, get_normalized_logger
+from utils.ffmpeg_path import get_ffmpeg_path as get_path
 
 from core.exceptions import FFmpegNotFoundError, AudioProcessingError
 from utils.config import Config
@@ -15,52 +16,12 @@ from utils.config import Config
 logger = get_normalized_logger('ffmpeg_utils')
 
 def get_ffmpeg_path() -> str:
-    """Findet FFmpeg-Binary (embedded oder system-wide)"""
-    herkunft = 'ffmpeg_utils.py'
-    log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Suche FFmpeg-Binary')
-    # 1. Prüfe embedded FFmpeg (in .exe oder Projektordner)
-    if getattr(sys, 'frozen', False):
-        # Wenn als .exe gepackt (PyInstaller)
-        base_path = sys._MEIPASS  # PyInstaller temp folder
-        ffmpeg_path = os.path.join(base_path, 'ffmpeg', 'ffmpeg.exe')
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'EXE-Modus erkannt: base_path=%s', base_path)
-        if os.path.exists(ffmpeg_path):
-            log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Verwende eingebettetes FFmpeg: %s', ffmpeg_path)
-            return ffmpeg_path
-        else:
-            log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Eingebettetes FFmpeg nicht gefunden: %s', ffmpeg_path)
-    else:
-        # Entwicklungsmodus - relative zum Skript
-        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ffmpeg_path = os.path.join(script_dir, 'ffmpeg', 'ffmpeg.exe')
-        log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Entwicklungsmodus: script_dir=%s', script_dir)
-        if os.path.exists(ffmpeg_path):
-            log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Verwende Projekt-FFmpeg: %s', ffmpeg_path)
-            return ffmpeg_path
-        else:
-            log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Projekt-FFmpeg nicht gefunden: %s', ffmpeg_path)
-    # 2. Fallback: System-FFmpeg
-    log_with_prefix(logger, 'warning', 'FFMPEG', herkunft, 'Verwende System-FFmpeg aus PATH')
-    return "ffmpeg"
+    """Wrapper um die zentrale get_path Funktion für ffmpeg.exe"""
+    return get_path('ffmpeg.exe')
 
 def get_ffprobe_path() -> str:
-    """Findet FFprobe-Binary"""
-    herkunft = 'ffmpeg_utils.py'
-    log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Suche FFprobe-Binary')
-    if getattr(sys, 'frozen', False):
-        base_path = sys._MEIPASS
-        ffprobe_path = os.path.join(base_path, 'ffmpeg', 'ffprobe.exe')
-        if os.path.exists(ffprobe_path):
-            log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Verwende eingebettetes FFprobe: %s', ffprobe_path)
-            return ffprobe_path
-    else:
-        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ffprobe_path = os.path.join(script_dir, 'ffmpeg', 'ffprobe.exe')
-        if os.path.exists(ffprobe_path):
-            log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Verwende Projekt-FFprobe: %s', ffprobe_path)
-            return ffprobe_path
-    log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Verwende System-FFprobe aus PATH')
-    return "ffprobe"
+    """Wrapper um die zentrale get_path Funktion für ffprobe.exe"""
+    return get_path('ffprobe.exe')
 
 class FFmpegUtils:
     """Wrapper für FFmpeg-Operationen mit embedded Binaries und konsistentem Logging"""
@@ -123,7 +84,7 @@ class FFmpegUtils:
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Unsicherer Pfad erkannt (Path Traversal): %s', file_path)
             raise AudioProcessingError(f"Unsicherer Pfad erkannt: {file_path}")
         # Prüfe auf gefährliche Zeichen
-        dangerous_chars = [";", "&", "|", "`", "$", "(", ")", "<", ">"]
+        dangerous_chars = [";", "`", "$", "<", ">"]
         for char in dangerous_chars:
             if char in normalized:
                 log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Gefährliches Zeichen im Pfad: %s in %s', char, file_path)
@@ -208,8 +169,8 @@ class FFmpegUtils:
             log_with_prefix(logger, 'error', 'FFMPEG', herkunft, 'Unerwarteter Fehler bei Audio-Extraktion: %s', str(e))
             raise AudioProcessingError(f"FFmpeg Audio-Extraktion: {str(e)}")
         
-    def convert_to_wav(self, input_path: str, wav_path: str, sample_rate: int = 48000) -> None:
-        """Konvertiert eine Audio-Datei zu Mono-WAV"""
+    def convert_to_wav(self, input_path: str, wav_path: str, sample_rate: int = 48000, duration: Optional[int] = None) -> None:
+        """Konvertiert eine Audio-Datei zu Mono-WAV mit optionaler Dauerbegrenzung"""
         herkunft = 'ffmpeg_utils.py'
         log_with_prefix(logger, 'info', 'FFMPEG', herkunft, 'Audio-Konvertierung zu WAV gestartet')
         log_with_prefix(logger, 'debug', 'FFMPEG', herkunft, 'Input: %s', os.path.basename(input_path))
@@ -229,9 +190,14 @@ class FFmpegUtils:
             "-acodec", "pcm_s16le",
             "-ar", str(safe_sample_rate),
             "-ac", "1",  # Mono
-            "-t", "3600",  # Max 1 Stunde
-            safe_wav_path
         ]
+
+        if duration:
+            cmd.extend(["-t", str(duration)])
+        else:
+            cmd.extend(["-t", "3600"])  # Max 1 Stunde als Fallback
+
+        cmd.append(safe_wav_path)
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

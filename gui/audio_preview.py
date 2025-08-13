@@ -75,17 +75,19 @@ class AudioPreviewPlayer:
         self.stop()
         self.current_file = wav_path
         try:
+            # Use soundfile to get the accurate duration of the generated preview file
             import soundfile as sf
             info = sf.info(wav_path)
-            self.duration = min(30, info.duration)
-            # Geändert: Für pygame: Lade Sound zur Duration-Prüfung
+            self.duration = info.duration
+            
+            # For pygame, we still use the music module, but the duration is now correct
             if self.player_type == 'pygame':
-                self.pygame_sound = pygame.mixer.Sound(wav_path)
-                self.duration = min(30, self.pygame_sound.get_length())
+                # No need to load sound here, music.load is called in play()
+                pass
         except Exception as e:
             log_with_prefix(logger, 'warning', 'PREVIEW', herkunft, 'Duration-Berechnung fehlgeschlagen ⚠️: %s', str(e))
             file_size = os.path.getsize(wav_path)
-            self.duration = min(30, file_size / (22050 * 2))
+            self.duration = file_size / (22050 * 2) # Inaccurate fallback
         return True
 
     def play(self) -> bool:
@@ -359,10 +361,10 @@ class AudioPreviewWidget(ctk.CTkFrame):
             # Audio extrahieren/kopieren (30s Vorschau)
             log_with_prefix(logger, 'info', 'PREVIEW', herkunft, f'Extrahiere/Lade 30s Audio-Vorschau ({media_type})')
             if media_type == 'video':
-                self.ffmpeg.extract_audio_preview(media_path, self.temp_preview_file)
+                self.ffmpeg.extract_audio_preview(media_path, self.temp_preview_file, duration=30)
             else:  # Audio
                 # Für Audio: Direkt zu WAV konvertieren (Mono, 30s)
-                self.ffmpeg.convert_to_wav(media_path, self.temp_preview_file, sample_rate=22050)
+                self.ffmpeg.convert_to_wav(media_path, self.temp_preview_file, sample_rate=22050, duration=30)
             self._debug_audio_info(self.temp_preview_file, "Original-Vorschau")
             # UI aktualisieren (im Main Thread)
             self.after(0, self._on_load_success)
