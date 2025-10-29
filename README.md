@@ -531,6 +531,24 @@ Dieses Projekt steht unter der GNU General Public License v3.0. Siehe [LICENSE](
 
 **Kurz gesagt**: Sie können alles damit machen, aber Verbesserungen müssen der Community zur Verfügung gestellt werden.
 
+## Credits
+
+**Schröter, H., Rosenkranz, T., Escalante-B., A. N., & Maier, A. (2023).**  
+*DeepFilterNet: Perceptually Motivated Real-Time Speech Enhancement.*  
+In *INTERSPEECH 2023*.  
+[BibTeX](https://dblp.org/rec/conf/interspeech/SchroeterREM23.html?view=bibtex)
+
+**Ravanelli, M., Parcollet, T., Moumen, A., de Langen, S., Subakan, C., Plantinga, P., Wang, Y., Mousavi, P., Della Libera, L., Ploujnikov, A., Paissan, F., Borra, D., Zaiem, S., Zhao, Z., Zhang, S., Karakasidis, G., Yeh, S.-L., Champion, P., Rouhe, A., Braun, R., Mai, F., Zuluaga-Gomez, J., Mousavi, S. M., Nautsch, A., Nguyen, H., Liu, X., Sagar, S., Duret, J., Mdhaffar, S., Laperrière, G., Rouvier, M., De Mori, R., & Estève, Y. (2024).**  
+*Open-Source Conversational AI with SpeechBrain 1.0.*  
+Journal of Machine Learning Research, 25(333).  
+[Link zur Publikation](http://jmlr.org/papers/v25/24-0991.html)
+
+**Ravanelli, M., Parcollet, T., Plantinga, P., Rouhe, A., Cornell, S., Lugosch, L., Subakan, C., Dawalatabad, N., Heba, A., Zhong, J., Chou, J.-C., Yeh, S.-L., Fu, S.-W., Liao, C.-F., Rastorgueva, E., Grondin, F., Aris, W., Na, H., Gao, Y., De Mori, R., & Bengio, Y. (2021).**  
+*SpeechBrain: A General-Purpose Speech Toolkit.*  
+arXiv:2106.04624.  
+[Link zur arXiv-Version](https://arxiv.org/abs/2106.04624)
+
+
 ---
 
 **Entwickelt mit ❤️ für bessere Audio-Qualität**
