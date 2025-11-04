@@ -96,7 +96,7 @@ Ich entwickle gerne in meiner Freizeit frei verfügbare Programme. Wenn du das f
 
 ## 🚀 Installation
 Es gibt zwei Wege, das Programm zu benutzen.
-1. Rechts auf dieser Seite findet man unter [Releases](https://github.com/justanotherjurastudent/Audio-Restaurierung/releases/) eine exe-Version, die auf Windows sofort gestartet werden kann. Dies ist die einfachste Möglichkeit.
+1. Rechts auf dieser Seite findet man unter [Releases](https://github.com/justanotherjurastudent/Audio-Restaurierung/releases/) eine **exe-Version**, die auf Windows **sofort gestartet** werden kann. Dies ist die einfachste Möglichkeit.
 2. Das Programm kann auch als Projekt heruntergeladen werden. Dazu verweise ich auf folgende Anleitung:
 
 ### Voraussetzungen
@@ -558,4 +558,4 @@ arXiv:2106.04624.
 
 **Entwickelt mit ❤️ für bessere Audio-Qualität**
 
-*Haben Sie Fragen oder Verbesserungsvorschläge? Erstellen Sie gerne ein Issue auf GitHub!*
+*Fragen oder Verbesserungsvorschläge? Erstelle gerne ein Issue auf GitHub!*
