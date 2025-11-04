@@ -23,7 +23,7 @@ Ein Tool zur KI-gestützten Audio-Restauration von Audio- und Videodateien mit d
 
 ## 🎯 Überblick
 
-Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, das die Tonqualität von Audio- und Videodateien durch moderne KI-Algorithmen und bewährte Audacity-Techniken verbessert. Audio aus Videos wird durch die verbesserte Audiospur ersetzt, ohne das ganze Video neu zu kodieren. Dadurch kann effizient die Tonqualität von Videos auch im Batch-Prozess verarbeitet werden. Es eignet sich perfekt für:
+Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, das die Tonqualität von Audio- und Videodateien durch moderne KI-Algorithmen und bewährte Audacity-Techniken verbessert. Audio aus Videos wird durch die verbesserte Audiospur ersetzt, **ohne das ganze Video neu zu kodieren**. Dadurch kann effizient die Tonqualität von Videos auch im Batch-Prozess verarbeitet werden. Es eignet sich perfekt für:
 
 - **Content Creator** die ihre Videos professioneller klingen lassen möchten
 - **Podcaster** zur Verbesserung der Aufnahmequalität  
