@@ -40,6 +40,11 @@ Das **Audio-Restaurationstool** ist ein benutzerfreundliches Python-Programm, da
 - 🇩🇪 **Deutsche Benutzeroberfläche** - Alles auf Deutsch erklärt
 - ⏹️ **Abbrechen jederzeit möglich** - Volle Kontrolle über den Prozess
 
+### 🍺 Unterstützung meines freien Contents
+Ich entwickle gerne in meiner Freizeit frei verfügbare Programme. Wenn du das für unterstützenswert hältst, dann gib mir doch gerne ein Bier aus :)
+
+<a href="https://www.buymeacoffee.com/justanotherjurastudent" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 ## ✨ Features
 
 ### 🎯 Rauschreduzierungsmethoden
